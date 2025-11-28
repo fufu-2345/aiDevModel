@@ -13,7 +13,7 @@ with open(model_dir + "config.json", "r", encoding="utf-8") as f:
 tokenizer = TTSTokenizer(config)
 
 model = Vits.init_from_config(config)
-model.load_checkpoint(config, model_dir + "model.pth", eval=True)
+model.load_checkpoint(config, model_dir + "best_model.pth", eval=True)
 
 text = "ทดสอบ ทดสอบ โล่งอก หนึ่ง สอง สาม"
 
