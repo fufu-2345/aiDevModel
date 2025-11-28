@@ -5,6 +5,7 @@ node_modules
 venv/*
 .pnp
 .pnp.js
+sound/*
 
 # testing
 coverage
