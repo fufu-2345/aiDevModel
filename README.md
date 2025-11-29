@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # detail  
 turbo nextjs + fast api    
   
@@ -39,3 +40,6 @@ npx create-turbo@latest -e with-tailwind
 - [TypeScript](https://www.typescriptlang.org/) for static type checking  
 - [ESLint](https://eslint.org/) for code linting  
 - [Prettier](https://prettier.io) for code formatting    
+=======
+# aiDevModel
+>>>>>>> 46fb2ee9824c24d727ce92612743fe67828a65ae
