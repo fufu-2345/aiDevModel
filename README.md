@@ -2,7 +2,8 @@
 turbo nextjs + fast api    
   
 # Install(Only for root)  
-pnpm install  
+cd apps & cd front & pnpm install   
+cd ../back & venv\Scripts\activate & pip install -r requirements.txt  
   
 # Check   
 /packages/typescript-config/nextjs.json ว่า module เป็นอะไร(เลขคู่เสถียรกว่า)  
