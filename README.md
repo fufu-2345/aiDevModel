@@ -24,12 +24,14 @@ web: 3000
 docs: 3001  
   
 # Start  
-pnpm dev(pnpm run dev)      
-
+pnpm dev(pnpm run dev)     
+ollama run llama3(in apps/back2)    
+  
 # venv  
 active  
 window: venv\Scripts\activate  
-linux: source venv/bin/activate  
+linux: source venv/bin/activate    
+pip install -r requirements.txt  
   
 # Source  
 npx create-turbo@latest -e with-tailwind  

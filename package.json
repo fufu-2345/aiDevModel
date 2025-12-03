@@ -4,7 +4,7 @@
   "scripts": {
     "build": "turbo run build",
     "start": "turbo run dev",
-    "postinstall": "cd apps/back && python -m venv venv && .\\venv\\Scripts\\activate && pip install -r requirements.txt",
+    "postinstall": "cd apps/back2 && python -m venv venv && .\\venv\\Scripts\\activate && pip install -r requirements.txt",
     "lint": "turbo run lint",
     "check-types": "turbo run check-types",
     "format": "prettier --write \"**/*.{ts,tsx,md}\""
