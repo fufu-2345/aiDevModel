@@ -23,22 +23,15 @@ def test_pdfplumber(pdf_path: str):
             num_pages = len(pdf.pages)
             logger.info('Total pages: %d', num_pages)
 
-            # Read pages 1-5 (or all if fewer than 5)
             max_pages = min(5, num_pages)
             logger.info('Reading pages 1 to %d', max_pages)
-
             for page_idx in range(max_pages):
                 page = pdf.pages[page_idx]
                 text = page.extract_text() or ''
-
-                # รวมทุกบรรทัดเป็นข้อความเดียว
                 clean_text = text.strip()
-
                 logger.info("\n=== PAGE %d ===\n%s\n", page_idx + 1, clean_text)
-
     except Exception as e:
         logger.exception('Error reading PDF: %s', e)
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Test PDF reading with pdfplumber')

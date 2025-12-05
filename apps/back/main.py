@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .ollama_client import generate_text
+from .ollama import generate_text
 
 app= FastAPI()
 
