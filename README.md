@@ -41,3 +41,7 @@ npx create-turbo@latest -e with-tailwind
 - [TypeScript](https://www.typescriptlang.org/) for static type checking  
 - [ESLint](https://eslint.org/) for code linting  
 - [Prettier](https://prettier.io) for code formatting    
+  
+netstat -ano | findstr :8000  
+taskkill /PID 21320 /F  
+taskkill /IM python.exe /F 
