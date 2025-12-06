@@ -5,6 +5,7 @@ import requests
 import json
 import io
 import time
+import re
 
 app= FastAPI()
 
@@ -25,7 +26,6 @@ def process_text_with_ollama(text_input: str) -> str:
         f"1. Fix all 'sara-loi' (floating vowels) and misplaced tone marks to standard Thai grammar.\n"
         f"2. Maintain the original meaning and writing style.\n"
         f"3. CRITICAL: Output ONLY the corrected text. Do not include any introduction, preamble, notes, or conclusion."
-    
         f"--- my text ---\n"
         f"{text_input}\n"
         f"Output ONLY the result."
@@ -35,7 +35,6 @@ def process_text_with_ollama(text_input: str) -> str:
         "prompt": prompt,
         "stream": False 
     }
-
     try:
         response = requests.post(
             OLLAMA_API_URL, 
@@ -44,13 +43,28 @@ def process_text_with_ollama(text_input: str) -> str:
             timeout=1200
         )
         response.raise_for_status() 
-        
         result = response.json()
         return result['response'].strip()
-
     except requests.exceptions.RequestException as e:
         print(f"Error calling Ollama API: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to communicate with Ollama or Ollama failed to process: {e}. "f"Please check if Ollama is running and model '{OLLAMA_MODEL}' is installed.")
+
+def clean_thai_pdf_text(text: str) -> str:
+    if not text:
+        return ""
+    replace_dict = {
+        '\uf700': 'ฐ', '\uf701': 'ญ', '\uf702': 'ฐ', '\uf703': 'ญ',
+        '\uf704': 'ญ', '\uf705': 'ฐ', '\uf706': 'ญ', '\uf707': 'ฐ',
+        '\uf708': 'ญ', '\uf709': 'ญ', '\uf70a': '่', '\uf70b': '้',
+        '\uf70c': '๊', '\uf70d': '๋', '\uf70e': '์', '\uf70f': 'ํ',
+        '\uf710': 'ั', '\uf711': '็', '\uf712': 'ิ', '\uf713': 'ี',
+        '\uf714': 'ึ', '\uf715': 'ื', '\uf716': 'ุ', '\uf717': 'ู',
+        '\uf718': 'ุ', '\uf719': 'ู', '\uf71a': '็',
+    }
+    cleaned_text = text
+    for pua_char, std_char in replace_dict.items():
+        cleaned_text = cleaned_text.replace(pua_char, std_char)
+    return cleaned_text
 
 @app.post("/process-pdf/")
 async def upload_and_process_pdf(
@@ -83,8 +97,10 @@ async def upload_and_process_pdf(
                     raw_text = pdf.pages[page_index].extract_text()
                     
                     if raw_text and raw_text.strip():
-                        print(f"   >> Processing Page {page_num}...", flush=True)
-                        corrected_chunk = process_text_with_ollama(raw_text)  
+                        # print(f"   >> Processing Page {page_num}...", flush=True)
+                        clean_raw_text = clean_thai_pdf_text(raw_text)
+                        corrected_chunk = process_text_with_ollama(clean_raw_text)  
+                        print(corrected_chunk)
                         formatted_output = f"--- Page {page_num} ---\n{corrected_chunk}\n"
                         corrected_pages_list.append(formatted_output)
                     else:
@@ -106,6 +122,136 @@ async def upload_and_process_pdf(
         "total_pages_in_pdf": total_pages,
         "processing_time_seconds": round(duration, 2),
         "corrected_text": final_corrected_text
+    }
+    
+def fix_header_with_ollama(header_text: str) -> str:
+    prompt = (
+        f"Correct Thai text errors. Focus on identifying chapter titles like 'ตอนที่'.\n"
+        f"Input: {header_text}\n"
+        f"Output ONLY the corrected text line."
+    )
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "num_predict": 50,  
+            "temperature": 0.1 
+        }
+    }
+    try:
+        response = requests.post(
+            OLLAMA_API_URL, 
+            headers={"Content-Type": "application/json"}, 
+            data=json.dumps(payload),
+            timeout=120 
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result['response'].strip()
+    except Exception as e:
+        print(f"Ollama Error (Header): {e}")
+        return header_text 
+
+@app.post("/map-chapters/")
+async def map_chapters(
+    file: UploadFile = File(...),
+    start_chapter: int = Form(...),
+    end_chapter: int = Form(...)
+):
+    print(f"\n========== MAPPING CHAPTERS {start_chapter} to {end_chapter} ==========", flush=True)
+    
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="This is not a PDF file")
+
+    file_content = await file.read()
+    
+    found_chapters = []  # เก็บผลลัพธ์: [{'chapter': 1, 'start_page': 3, 'end_page': 5}, ...]
+    
+    # ตัวแปรช่วยในการ Mapping
+    current_chapter_num = None
+    current_chapter_start_page = None
+    
+    start_time = time.perf_counter()
+
+    try:
+        with pdfplumber.open(io.BytesIO(file_content)) as pdf:
+            total_pages = len(pdf.pages)
+            
+            # วนลูปทุกหน้าเพื่อหาจุดขึ้นต้นตอนใหม่
+            for i, page in enumerate(pdf.pages):
+                page_num = i + 1
+                
+                # 1. ดึง Text แค่ส่วนบน (ประมาณ 1/4 หน้าบน หรือ 3-4 บรรทัดแรก)
+                # ใช้ crop เพื่อความเร็วและแม่นยำ ไม่ต้อง extract ทั้งหน้า
+                width = page.width
+                height = page.height
+                header_crop = page.crop((0, 0, width, height * 0.2)) # ตัดมาแค่ 20% ด้านบน
+                
+                raw_text = header_crop.extract_text()
+                
+                if not raw_text or not raw_text.strip():
+                    continue
+
+                # 2. Clean เบื้องต้น
+                cleaned_text = clean_thai_pdf_text(raw_text)
+                # ตัดเอาแค่ 100 ตัวอักษรแรกเพื่อส่ง AI (ประหยัดเวลา)
+                short_header = cleaned_text[:150].replace('\n', ' ') 
+
+                # 3. ส่งให้ Ollama แก้ไข
+                corrected_header = fix_header_with_ollama(short_header)
+                
+                # 4. ใช้ Regex หาคำว่า "ตอนที่ <ตัวเลข>"
+                # รองรับกรณีเว้นวรรค เช่น "ตอน ที่ 1" หรือ "ตอนที่1"
+                match = re.search(r'ตอน\s*ที่\s*(\d+)', corrected_header)
+                
+                if match:
+                    found_chap_num = int(match.group(1))
+                    print(f" -> Found Chapter {found_chap_num} at Page {page_num}", flush=True)
+
+                    # --- LOGIC การตัดจบตอนเก่า ---
+                    if current_chapter_num is not None:
+                        # บันทึกตอนเก่าลง list
+                        # หน้าจบของตอนเก่า คือ หน้าก่อนหน้าปัจจุบัน (page_num - 1)
+                        found_chapters.append({
+                            "chapter": current_chapter_num,
+                            "start_page": current_chapter_start_page,
+                            "end_page": page_num - 1
+                        })
+                    
+                    # เริ่มต้นตอนใหม่
+                    current_chapter_num = found_chap_num
+                    current_chapter_start_page = page_num
+            
+            # 5. จัดการตอนสุดท้าย (เพราะวนลูปจบแล้ว แต่ตอนสุดท้ายยังไม่ได้บันทึก end_page)
+            if current_chapter_num is not None:
+                found_chapters.append({
+                    "chapter": current_chapter_num,
+                    "start_page": current_chapter_start_page,
+                    "end_page": total_pages # จบที่หน้าสุดท้ายของไฟล์
+                })
+
+    except Exception as e:
+        print(f"ERROR: {e}", flush=True)
+        raise HTTPException(status_code=500, detail=f"Processing Error: {e}")
+
+    # 6. Filter เอาเฉพาะช่วงตอนที่ User ต้องการ
+    filtered_result = [
+        c for c in found_chapters 
+        if start_chapter <= c['chapter'] <= end_chapter
+    ]
+    if not filtered_result and found_chapters:
+         print("Warning: Chapters found but not in the requested range.")
+
+    duration = time.perf_counter() - start_time
+    print(f"Mapping finished in {duration:.2f} seconds")
+
+    return {
+        "filename": file.filename,
+        "request_range": f"Chapter {start_chapter} - {end_chapter}",
+        "total_pages_scanned": total_pages,
+        "processing_time": f"{duration:.2f}s",
+        "chapters": filtered_result
     }
     
 @app.get("/")
