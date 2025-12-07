@@ -67,7 +67,6 @@ export default function ProcessPdfPage() {
       setExecutionTime(((performance.now() - startTime) / 1000).toFixed(2));
       setOutputText(result.corrected_text);
       setMessage(`✅ สำเร็จ! (อ่านหน้า ${result.pages_processed} จาก ${result.filename})`);
-
     } catch (error: any) {
       console.error('Error:', error);
       setOutputText('');
