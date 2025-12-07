@@ -87,7 +87,7 @@ async def upload_and_process_pdf(
         with pdfplumber.open(io.BytesIO(file_content)) as pdf:
             total_pages = len(pdf.pages)
             if start < 1:
-                raise HTTPException(status_code=400, detail="Start page must be at least 1")
+                 raise HTTPException(status_code=400, detail="Start page must be at least 1")
             if total_pages < end:
                 raise HTTPException(status_code=400, detail=f"PDF has only {total_pages} pages")
 
@@ -97,6 +97,7 @@ async def upload_and_process_pdf(
                     raw_text = pdf.pages[page_index].extract_text()
                     
                     if raw_text and raw_text.strip():
+                        # print(f"   >> Processing Page {page_num}...", flush=True)
                         clean_raw_text = clean_thai_pdf_text(raw_text)
                         corrected_chunk = process_text_with_ollama(clean_raw_text)  
                         print(corrected_chunk)
@@ -129,7 +130,9 @@ def fix_header_with_ollama(header_text: str) -> str:
         f"Input: {header_text}\n"
         f"Output ONLY the corrected text line."
     )
-    payload = {"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "options": { "num_predict": 50, "temperature": 0.1 }}
+    payload = {
+        "model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "options": { "num_predict": 50, "temperature": 0.1 }
+    }
     try:
         response = requests.post(
             OLLAMA_API_URL, 
@@ -146,21 +149,24 @@ def fix_header_with_ollama(header_text: str) -> str:
 
 @app.post("/map-chapters/")
 async def map_chapters(file: UploadFile = File(...), startChapter: int = Form(...), endChapter: int = Form(...)):
-    # start_time = time.perf_counter()
+    start_time = time.perf_counter()
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="This is not a PDF file")
     file_content = await file.read()
+    
     found_chapters = [] 
-    currentChapter = None
-    currentStart = None
+    current_chapter_num = None
+    current_chapter_start_page = None
 
     try:
         with pdfplumber.open(io.BytesIO(file_content)) as pdf:
             width = pdf.pages[0].width
-            height = pdf.pages[0].height*0.1
+            height = pdf.pages[0].height*0.2
 
             for i, page in enumerate(pdf.pages):
-                raw_text = page.crop((0, 0, width, height)).extract_text()
+                page_num = i + 1
+                header_crop = page.crop((0, 0, width, height))
+                raw_text = header_crop.extract_text()
                 
                 if not raw_text or not raw_text.strip():
                     continue
@@ -173,34 +179,34 @@ async def map_chapters(file: UploadFile = File(...), startChapter: int = Form(..
                 if match:
                     found_chap_num = int(match.group(1))
                     # ถ้ามีตอนเก่าค้างอยู่ (เช่นเจอตอน 2 แล้วกำลังจะเริ่มตอน 2) -> ให้บันทึกตอนที่ 1
-                    if currentChapter is not None:
+                    if current_chapter_num is not None:
                         found_chapters.append({
-                            "chapter": currentChapter,
-                            "start_page": currentStart,
-                            "end_page": i
+                            "chapter": current_chapter_num,
+                            "start_page": current_chapter_start_page,
+                            "end_page": page_num - 1
                         })
 
                         # [จุดแก้ไขสำคัญ]: เช็คว่าตอนที่เพิ่งบันทึกจบไป ใช่ตอนสุดท้ายที่ต้องการไหม?
                         # ถ้าใช่ (เช่น เพิ่งบันทึกตอน 5 จบ เพราะเจอตอน 6) -> หยุดทันที!
-                        if currentChapter >= endChapter:
+                        if current_chapter_num >= endChapter:
                             print(f"DEBUG: Found end of requested chapter {endChapter}. Stopping scan.", flush=True)
-                            currentChapter = None # Reset เพื่อไม่ให้ไปบันทึกซ้ำด้านล่าง
+                            current_chapter_num = None # Reset เพื่อไม่ให้ไปบันทึกซ้ำด้านล่าง
                             break      
                     # เริ่มต้น track ตอนใหม่ที่เพิ่งเจอ
-                    currentChapter = found_chap_num
-                    currentStart = i+1
+                    current_chapter_num = found_chap_num
+                    current_chapter_start_page = page_num
                     
                     # หา 500 เจอ 501
                     if found_chap_num > endChapter:
-                        currentChapter = None
+                        current_chapter_num = None
                         break
             # จัดการกรณีวนลูปจบเล่ม หรือ Break ออกมาแล้วยังมีตอนค้างอยู่ (กรณีตอนสุดท้ายของไฟล์)
-            if currentChapter is not None:
+            if current_chapter_num is not None:
                 # ตรวจสอบอีกครั้งว่าตอนที่ค้างอยู่ อยู่ใน range ที่ต้องการไหม
-                if currentChapter <= endChapter:
+                if current_chapter_num <= endChapter:
                     found_chapters.append({
-                        "chapter": currentChapter,
-                        "start_page": currentStart,
+                        "chapter": current_chapter_num,
+                        "start_page": current_chapter_start_page,
                         "end_page": len(pdf.pages) 
                     })
     except Exception as e:
@@ -211,12 +217,17 @@ async def map_chapters(file: UploadFile = File(...), startChapter: int = Form(..
         c for c in found_chapters 
         if startChapter <= c['chapter'] <= endChapter
     ]
+
     if not filtered_result and found_chapters:
         print("Warning: Chapters found but not in the requested range.")
-    # duration = time.perf_counter() - start_time
-    # print(f"Mapping finished in {duration:.3f} seconds")
+    duration = time.perf_counter() - start_time
+    print(f"Mapping finished in {duration:.3f} seconds")
 
     return {
+        "filename": file.filename,
+        "request_range": f"Chapter {startChapter} - {endChapter}",
+        "total_pages_scanned": page_num,
+        "processing_time": f"{duration:.3f}s",
         "chapters": filtered_result
     }
     

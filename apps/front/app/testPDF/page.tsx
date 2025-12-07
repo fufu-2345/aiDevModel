@@ -1,18 +1,26 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, ChangeEvent, FormEvent } from 'react';
+
+interface ProcessResponse {
+  corrected_text: string;
+  pages_processed: number;
+  filename: string;
+}
+interface ApiError {
+  detail: string;
+}
 
 export default function ProcessPdfPage() {
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [startPage, setStartPage] = useState(2);
-  const [endPage, setEndPage] = useState(7);
-  const [outputText, setOutputText] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [message, setMessage] = useState('');
-  const [executionTime, setExecutionTime] = useState(null);
-  const FASTAPI_URL = 'http://localhost:8000/process-pdf/';
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [startPage, setStartPage] = useState<string | number>(2);
+  const [endPage, setEndPage] = useState<string | number>(7);
+  const [outputText, setOutputText] = useState<string>('');
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [message, setMessage] = useState<string>('');
+  const [executionTime, setExecutionTime] = useState<string | null>(null);
 
-  const handleFileChange = (event) => {
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files ? event.target.files[0] : null;
     if (file && file.type === 'application/pdf') {
       setSelectedFile(file);
@@ -26,14 +34,16 @@ export default function ProcessPdfPage() {
     }
   };
 
-  const handleSubmit = async (event) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const startTime = performance.now();
+    const formData = new FormData();
 
     if (!selectedFile) {
       setMessage('ลืมเลือกไฟล์ PDF ครับ');
       return;
     }
-    if (parseInt(startPage) > parseInt(endPage)) {
+    if (Number(startPage) > Number(endPage)) {
       setMessage('❌ หน้าเริ่มต้น ต้องน้อยกว่าหรือเท่ากับ หน้าสุดท้าย');
       return;
     }
@@ -42,32 +52,28 @@ export default function ProcessPdfPage() {
     setExecutionTime(null);
     setMessage('⏳ กำลังประมวลผล กรุณารอสักครู่...');
 
-    const startTime = performance.now();
-    const formData = new FormData();
     formData.append('file', selectedFile);
-    formData.append('start', startPage);
-    formData.append('end', endPage);
+    formData.append('start', String(startPage));
+    formData.append('end', String(endPage));
 
     try {
-      const response = await fetch(FASTAPI_URL, {
-        method: 'POST',
-        body: formData,
-      });
+      const response = await fetch("http://localhost:8000/process-pdf/", { method: 'POST', body: formData, });
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData: ApiError = await response.json();
         throw new Error(errorData.detail || 'การประมวลผลล้มเหลว');
       }
 
-      const result = await response.json();
+      const result: ProcessResponse = await response.json();
       setExecutionTime(((performance.now() - startTime) / 1000).toFixed(2));
       setOutputText(result.corrected_text);
       setMessage(`✅ สำเร็จ! (อ่านหน้า ${result.pages_processed} จาก ${result.filename})`);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error:', error);
       setOutputText('');
       setExecutionTime(null);
-      setMessage(`❌ เกิดข้อผิดพลาด: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ';
+      setMessage(`❌ เกิดข้อผิดพลาด: ${errorMessage}`);
     } finally {
       setIsLoading(false);
     }

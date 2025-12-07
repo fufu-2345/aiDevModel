@@ -1,71 +1,76 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, ChangeEvent, FormEvent } from 'react';
+
+interface ChapterData {
+  chapter: number;
+  start_page: number;
+  end_page: number;
+}
+interface MapChaptersResponse {
+  chapters: ChapterData[];
+}
+interface ApiError {
+  detail: string;
+}
 
 export default function MapChaptersPage() {
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [startChapter, setStartChapter] = useState(1); // เปลี่ยนเป็น startChapter
-  const [endChapter, setEndChapter] = useState(10);    // เปลี่ยนเป็น endChapter
-  const [mappedChapters, setMappedChapters] = useState(null); // เก็บผลลัพธ์ที่เป็น JSON
-  const [isLoading, setIsLoading] = useState(false);
-  const [message, setMessage] = useState('');
-  const [executionTime, setExecutionTime] = useState(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [startChapter, setStartChapter] = useState<string | number>(1);
+  const [endChapter, setEndChapter] = useState<string | number>(10);
+  const [mappedChapters, setMappedChapters] = useState<ChapterData[] | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [message, setMessage] = useState<string>('');
+  const [executionTime, setExecutionTime] = useState<string | null>(null);
 
-  // URL ของ Endpoint ใหม่
-  const API_URL = 'http://localhost:8000/map-chapters/';
-
-  const handleFileChange = (event) => {
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files ? event.target.files[0] : null;
     if (file && file.type === 'application/pdf') {
       setSelectedFile(file);
       setMessage(`ไฟล์ที่เลือก: ${file.name}`);
-      setMappedChapters(null);
       setExecutionTime(null);
     } else {
       setSelectedFile(null);
       setMessage('กรุณาเลือกเฉพาะไฟล์ PDF เท่านั้น');
-      setMappedChapters(null);
     }
+    setMappedChapters(null);
   };
 
-  const handleSubmit = async (event) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-
-    if (!selectedFile) {
-      setMessage('ลืมเลือกไฟล์ PDF ครับ');
-      return;
-    }
-    if (parseInt(startChapter) > parseInt(endChapter)) {
-      setMessage('❌ ตอนเริ่มต้น ต้องน้อยกว่าหรือเท่ากับ ตอนสุดท้าย');
-      return;
-    }
-
+    const startTime = performance.now();
     setIsLoading(true);
     setExecutionTime(null);
     setMessage('⏳ กำลังสแกนหา "ตอนที่..." กรุณารอสักครู่ (เร็วกว่าเดิมแน่นอน)...');
 
-    const startTime = performance.now();
+    if (!selectedFile) {
+      setMessage('ลืมเลือกไฟล์ PDF ครับ');
+      setIsLoading(false);
+      return;
+    }
+    if (Number(startChapter) > Number(endChapter)) {
+      setMessage('❌ ตอนเริ่มต้น ต้องน้อยกว่าหรือเท่ากับ ตอนสุดท้าย');
+      setIsLoading(false);
+      return;
+    }
+
     const formData = new FormData();
     formData.append('file', selectedFile);
-    // Key ต้องตรงกับ Python: start_chapter, end_chapter
-    formData.append('start_chapter', startChapter);
-    formData.append('end_chapter', endChapter);
+    formData.append('startChapter', String(startChapter));
+    formData.append('endChapter', String(endChapter));
 
     try {
-      const response = await fetch(API_URL, {
+      const response = await fetch("http://localhost:8000/map-chapters/", {
         method: 'POST',
         body: formData,
       });
-
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData: ApiError = await response.json();
         throw new Error(errorData.detail || 'การประมวลผลล้มเหลว');
       }
 
-      const result = await response.json();
-      setExecutionTime(((performance.now() - startTime) / 1000).toFixed(2));
-
-      // เก็บข้อมูล Chapters ที่ได้มาใส่ State
+      const result: MapChaptersResponse = await response.json();
+      setExecutionTime(((performance.now() - startTime) / 1000).toFixed(3));
       setMappedChapters(result.chapters);
 
       if (result.chapters.length === 0) {
@@ -73,12 +78,12 @@ export default function MapChaptersPage() {
       } else {
         setMessage(`✅ เรียบร้อย! พบทั้งหมด ${result.chapters.length} ตอน`);
       }
-
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error:', error);
       setMappedChapters(null);
       setExecutionTime(null);
-      setMessage(`❌ เกิดข้อผิดพลาด: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setMessage(`❌ เกิดข้อผิดพลาด: ${errorMessage}`);
     } finally {
       setIsLoading(false);
     }
@@ -93,10 +98,7 @@ export default function MapChaptersPage() {
         <p className="mb-6 text-center text-gray-500">
           สแกนหาเลขหน้าของแต่ละตอนโดยอัตโนมัติด้วย AI
         </p>
-
         <form onSubmit={handleSubmit} className="flex flex-col space-y-5">
-
-          {/* Input File */}
           <div className="p-4 border-2 border-dashed border-blue-200 rounded-lg bg-blue-50/50">
             <label className="block mb-2 text-lg font-medium text-blue-900">
               📂 1. อัปโหลดไฟล์นิยาย (PDF)
@@ -116,7 +118,6 @@ export default function MapChaptersPage() {
             />
           </div>
 
-          {/* Input Chapter Range */}
           <div className="flex space-x-4">
             <div className="w-1/2">
               <label className="block mb-1 font-medium text-gray-700">🔍 เริ่มหาจาก "ตอนที่":</label>
@@ -139,8 +140,6 @@ export default function MapChaptersPage() {
               />
             </div>
           </div>
-
-          {/* Submit Button */}
           <button
             type="submit"
             disabled={!selectedFile || isLoading}
@@ -155,8 +154,6 @@ export default function MapChaptersPage() {
         </form>
 
         <hr className="my-6 border-gray-200" />
-
-        {/* Status Message */}
         <div className="text-center mb-4">
           <span className={`inline-block px-4 py-2 rounded-full font-medium text-sm
              ${isLoading ? 'bg-yellow-100 text-yellow-800 animate-pulse' :
@@ -167,7 +164,6 @@ export default function MapChaptersPage() {
           </span>
         </div>
 
-        {/* Result Table */}
         {mappedChapters && mappedChapters.length > 0 && (
           <div className="mt-6 animation-fade-in-up">
             <div className="flex justify-between items-center mb-3">
@@ -208,7 +204,6 @@ export default function MapChaptersPage() {
               </table>
             </div>
 
-            {/* Raw JSON View (Optional) */}
             <div className="mt-4">
               <details className="text-xs text-gray-400 cursor-pointer">
                 <summary>ดูข้อมูล JSON ดิบ</summary>
@@ -219,7 +214,6 @@ export default function MapChaptersPage() {
             </div>
           </div>
         )}
-
       </div>
     </main>
   );
