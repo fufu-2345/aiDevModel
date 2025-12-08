@@ -36,7 +36,7 @@ def process_text_with_ollama(text_input: str) -> str:
             OLLAMA_API_URL, 
             headers={"Content-Type": "application/json"}, 
             data=json.dumps(payload),
-            timeout=1200
+            timeout=1500
         )
         response.raise_for_status() 
         result = response.json()
@@ -86,8 +86,8 @@ async def upload_and_process_pdf(file: UploadFile = File(...), start: int = Form
                     
                     if raw_text and raw_text.strip():
                         cleanText = process_text_with_ollama(clean_thai_pdf_text(raw_text)) 
-                        formatted_output = f"--- Page {page_num} ---\n{cleanText}\n"
-                        correctedPages.append(formatted_output)
+                        print(cleanText, flush=True)
+                        correctedPages.append(cleanText)
                     else:
                         print(f"   >> Page {page_num} is empty or image only.", flush=True)
                         correctedPages.append(f"--- Page {page_num} ---\n[Empty Page]\n")

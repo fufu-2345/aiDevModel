@@ -19,6 +19,9 @@ export default function Page() {
 
       <br /><br />
       <Link href="/extract">Go to extract</Link>
+
+      <br /><br />
+      <Link href="/testTTS">Go to testTTS</Link>
     </div>
   );
 }
