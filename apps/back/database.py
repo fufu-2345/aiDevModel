@@ -2,8 +2,7 @@ import os
 from sqlmodel import SQLModel, create_engine, Session
 from dotenv import load_dotenv
 
-
-load_dotenv()
+load_dotenv(".env.local")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "password")
 POSTGRES_SERVER = os.getenv("POSTGRES_SERVER", "localhost")

@@ -1,5 +1,8 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+from sqlmodel import Session, select
+from typing import List
 import pdfplumber
 import requests
 import json
@@ -7,7 +10,15 @@ import io
 import time
 import re
 
-app= FastAPI()
+from database import create_db_and_tables, get_session
+from models import movieTitle, chapterContent
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_db_and_tables()
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,7 +28,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-OLLAMA_API_URL = "http://localhost:11434/api/generate"
+ollamaURL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "scb10x/typhoon2.1-gemma3-4b:latest"
 
 def process_text_with_ollama(text_input: str) -> str:
@@ -33,7 +44,7 @@ def process_text_with_ollama(text_input: str) -> str:
     payload = { "model": OLLAMA_MODEL, "prompt": prompt, "stream": False }
     try:
         response = requests.post(
-            OLLAMA_API_URL, 
+            ollamaURL, 
             headers={"Content-Type": "application/json"}, 
             data=json.dumps(payload),
             timeout=1500
@@ -61,6 +72,94 @@ def clean_thai_pdf_text(text: str) -> str:
     for pua_char, std_char in replace_dict.items():
         cleaned_text = cleaned_text.replace(pua_char, std_char)
     return cleaned_text
+
+@app.get("/movies/", response_model=List[movieTitle])
+def get_movies(session: Session = Depends(get_session)):
+    """ดึงข้อมูลหนังทั้งหมดไปแสดงหน้า Frontend"""
+    movies = session.exec(select(movieTitle)).all()
+    return movies
+
+@app.post("/upload-movie/")
+async def upload_movie(
+    title: str = Form(...),
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session)
+):
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="This is not a PDF file")
+    file_content = await file.read()
+    new_movie = movieTitle(movieTitle=title, episodeAmount=0, picPath="")
+    session.add(new_movie)
+    session.commit()
+    session.refresh(new_movie) 
+    try:
+        found_chapters_data = []
+        chapter_map = []
+        with pdfplumber.open(io.BytesIO(file_content)) as pdf:
+            total_pages = len(pdf.pages)
+            for i, page in enumerate(pdf.pages):
+                raw_text = page.extract_text()
+                if not raw_text or not raw_text.strip():
+                    continue
+                
+                cleaned_text = clean_thai_pdf_text(raw_text)
+                
+                lines = cleaned_text.split('\n')
+                for line in lines[:5]:
+                    match = re.search(r'ตอนท ี่\s*(\d+)', line)
+                    if match:
+                        found_chap_num = int(match.group(1))
+                        if not chapter_map or chapter_map[-1]['num'] != found_chap_num:
+                            chapter_map.append({
+                                'num': found_chap_num,
+                                'start_page': i
+                            })
+                        break 
+            for idx, chap in enumerate(chapter_map):
+                start_p = chap['start_page']
+                end_p = chapter_map[idx+1]['start_page'] - 1 if (idx + 1 < len(chapter_map)) else total_pages - 1
+                chapter_full_content = []
+                chapter_title_text = ""
+                
+                for p_idx in range(start_p, end_p + 1):
+                    page = pdf.pages[p_idx]
+                    page_text = clean_thai_pdf_text(page.extract_text() or "")                    
+                    if p_idx == start_p:
+                        lines = page_text.split('\n')
+                        header_found = False                       
+                        for line in lines:
+                            if not header_found and re.search(r'ตอนท ี่\s*' + str(chap['num']), line):
+                                title_match = re.search(r'ตอนท ี่\s*\d+\s*(.*)', line)
+                                if title_match:
+                                    chapter_title_text = title_match.group(1).strip()
+                                header_found = True
+                            else:
+                                chapter_full_content.append(line)
+                    else:
+                        chapter_full_content.append(page_text)
+                final_title = chapter_title_text if chapter_title_text else f"ตอนที่ {chap['num']}"               
+                new_chapter = chapterContent(
+                    episodeNumber=float(chap['num']),
+                    chapterTitle=final_title,
+                    chapterDetail="\n".join(chapter_full_content).strip(),
+                    movieId=new_movie.id
+                )
+                session.add(new_chapter)
+                found_chapters_data.append(new_chapter)
+            new_movie.episodeAmount = len(found_chapters_data)
+            session.add(new_movie)
+            session.commit()   
+            return {
+                "status": "success",
+                "movie_id": new_movie.id,
+                "total_chapters_found": len(found_chapters_data),
+                "chapters": [c.chapterTitle for c in found_chapters_data]
+            }
+    except Exception as e:
+        print(f"Error processing PDF: {e}")
+        session.delete(new_movie)
+        session.commit()
+        raise HTTPException(status_code=500, detail=f"PDF Processing Error: {e}")
 
 @app.post("/process-pdf/")
 async def upload_and_process_pdf(file: UploadFile = File(...), start: int = Form(...), end: int = Form(...)):
@@ -114,7 +213,7 @@ def fix_header_with_ollama(header_text: str) -> str:
     payload = {"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "options": { "num_predict": 50, "temperature": 0.1 }}
     try:
         response = requests.post(
-            OLLAMA_API_URL, 
+            ollamaURL, 
             headers={"Content-Type": "application/json"}, 
             data=json.dumps(payload),
             timeout=120 
@@ -138,17 +237,17 @@ async def map_chapters(file: UploadFile = File(...), startChapter: int = Form(..
     try:
         with pdfplumber.open(io.BytesIO(file_content)) as pdf:
             width = pdf.pages[0].width
-            height = pdf.pages[0].height*0.1
+            height = pdf.pages[0].height # *0.1
             for i, page in enumerate(pdf.pages):
-                raw_text = page.crop((0, 0, width, height)).extract_text()
-                
+                raw_text = page.extract_text()
+                # raw_text = page.crop((0, 0, width, height)).extract_text()
                 if not raw_text or not raw_text.strip():
                     continue
                 
                 cleaned_text = clean_thai_pdf_text(raw_text)               
-                short_header = cleaned_text[:20].replace('\n', ' ')      
+                # short_header = cleaned_text[:20].replace('\n', ' ')      
                 # corrected_header = fix_header_with_ollama(short_header)
-                match = re.search(r'ตอนท ี่\s*(\d+)', short_header)
+                match = re.search(r'ตอนท ี่\s*(\d+)', cleaned_text)
                 
                 if match:
                     found_chap_num = int(match.group(1))
@@ -160,7 +259,6 @@ async def map_chapters(file: UploadFile = File(...), startChapter: int = Form(..
                             "end_page": i
                         })
                         # [จุดแก้ไขสำคัญ]: เช็คว่าตอนที่เพิ่งบันทึกจบไป ใช่ตอนสุดท้ายที่ต้องการไหม?
-                        # ถ้าใช่ (เช่น เพิ่งบันทึกตอน 5 จบ เพราะเจอตอน 6) -> หยุดทันที!
                         if currentChapter >= endChapter:
                             print(f"DEBUG: Found end of requested chapter {endChapter}. Stopping scan.", flush=True)
                             currentChapter = None # Reset เพื่อไม่ให้ไปบันทึกซ้ำด้านล่าง
