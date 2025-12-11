@@ -204,95 +204,109 @@ async def upload_and_process_pdf(file: UploadFile = File(...), start: int = Form
         "corrected_text": correctedChapter
     }
     
-def fix_header_with_ollama(header_text: str) -> str:
-    prompt = (
-        f"Correct Thai text errors. Focus on identifying chapter titles like 'ตอนที่'.\n"
-        f"Input: {header_text}\n"
-        f"Output ONLY the corrected text line."
-    )
-    payload = {"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "options": { "num_predict": 50, "temperature": 0.1 }}
-    try:
-        response = requests.post(
-            ollamaURL, 
-            headers={"Content-Type": "application/json"}, 
-            data=json.dumps(payload),
-            timeout=120 
-        )
-        response.raise_for_status()
-        result = response.json()
-        return result['response'].strip()
-    except Exception as e:
-        print(f"Ollama Error (Header): {e}")
-        return header_text 
+@app.delete("/movies/{movie_id}")
+def delete_movie(movie_id: int, session: Session = Depends(get_session)):
+    movie = session.get(movieTitle, movie_id)
+    if not movie:
+        raise HTTPException(status_code=404, detail="Movie not found")
+    
+    chapters = session.exec(select(chapterContent).where(chapterContent.movieId == movie_id)).all()
+    for chapter in chapters:
+        session.delete(chapter)
+        
+    session.delete(movie)
+    session.commit()
+    return {"ok": True}
 
-@app.post("/map-chapters/")
-async def map_chapters(file: UploadFile = File(...), startChapter: int = Form(...), endChapter: int = Form(...)):
-    # start_time = time.perf_counter()
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="This is not a PDF file")
-    file_content = await file.read()
-    found_chapters = [] 
-    currentChapter = None
-    currentStart = None
-    try:
-        with pdfplumber.open(io.BytesIO(file_content)) as pdf:
-            width = pdf.pages[0].width
-            height = pdf.pages[0].height # *0.1
-            for i, page in enumerate(pdf.pages):
-                raw_text = page.extract_text()
-                # raw_text = page.crop((0, 0, width, height)).extract_text()
-                if not raw_text or not raw_text.strip():
-                    continue
+# def fix_header_with_ollama(header_text: str) -> str:
+#     prompt = (
+#         f"Correct Thai text errors. Focus on identifying chapter titles like 'ตอนที่'.\n"
+#         f"Input: {header_text}\n"
+#         f"Output ONLY the corrected text line."
+#     )
+#     payload = {"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "options": { "num_predict": 50, "temperature": 0.1 }}
+#     try:
+#         response = requests.post(
+#             ollamaURL, 
+#             headers={"Content-Type": "application/json"}, 
+#             data=json.dumps(payload),
+#             timeout=120 
+#         )
+#         response.raise_for_status()
+#         result = response.json()
+#         return result['response'].strip()
+#     except Exception as e:
+#         print(f"Ollama Error (Header): {e}")
+#         return header_text 
+
+# @app.post("/map-chapters/")
+# async def map_chapters(file: UploadFile = File(...), startChapter: int = Form(...), endChapter: int = Form(...)):
+#     # start_time = time.perf_counter()
+#     if not file.filename.endswith(".pdf"):
+#         raise HTTPException(status_code=400, detail="This is not a PDF file")
+#     file_content = await file.read()
+#     found_chapters = [] 
+#     currentChapter = None
+#     currentStart = None
+#     try:
+#         with pdfplumber.open(io.BytesIO(file_content)) as pdf:
+#             width = pdf.pages[0].width
+#             height = pdf.pages[0].height # *0.1
+#             for i, page in enumerate(pdf.pages):
+#                 raw_text = page.extract_text()
+#                 # raw_text = page.crop((0, 0, width, height)).extract_text()
+#                 if not raw_text or not raw_text.strip():
+#                     continue
                 
-                cleaned_text = clean_thai_pdf_text(raw_text)               
-                # short_header = cleaned_text[:20].replace('\n', ' ')      
-                # corrected_header = fix_header_with_ollama(short_header)
-                match = re.search(r'ตอนท ี่\s*(\d+)', cleaned_text)
+#                 cleaned_text = clean_thai_pdf_text(raw_text)               
+#                 # short_header = cleaned_text[:20].replace('\n', ' ')      
+#                 # corrected_header = fix_header_with_ollama(short_header)
+#                 match = re.search(r'ตอนท ี่\s*(\d+)', cleaned_text)
                 
-                if match:
-                    found_chap_num = int(match.group(1))
-                    # ถ้ามีตอนเก่าค้างอยู่ (เช่นเจอตอน 2 แล้วกำลังจะเริ่มตอน 2) -> ให้บันทึกตอนที่ 1
-                    if currentChapter is not None:
-                        found_chapters.append({
-                            "chapter": currentChapter,
-                            "start_page": currentStart,
-                            "end_page": i
-                        })
-                        # [จุดแก้ไขสำคัญ]: เช็คว่าตอนที่เพิ่งบันทึกจบไป ใช่ตอนสุดท้ายที่ต้องการไหม?
-                        if currentChapter >= endChapter:
-                            print(f"DEBUG: Found end of requested chapter {endChapter}. Stopping scan.", flush=True)
-                            currentChapter = None # Reset เพื่อไม่ให้ไปบันทึกซ้ำด้านล่าง
-                            break      
-                    # เริ่มต้น track ตอนใหม่ที่เพิ่งเจอ
-                    currentChapter = found_chap_num
-                    currentStart = i+1                
-                    # หา 500 เจอ 501
-                    if found_chap_num > endChapter:
-                        currentChapter = None
-                        break
-            # จัดการกรณีวนลูปจบเล่ม หรือ Break ออกมาแล้วยังมีตอนค้างอยู่ (กรณีตอนสุดท้ายของไฟล์)
-            if currentChapter is not None:
-                # ตรวจสอบอีกครั้งว่าตอนที่ค้างอยู่ อยู่ใน range ที่ต้องการไหม
-                if currentChapter <= endChapter:
-                    found_chapters.append({
-                        "chapter": currentChapter,
-                        "start_page": currentStart,
-                        "end_page": len(pdf.pages) 
-                    })
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Processing Error: {e}")
-    # Filter ผลลัพธ์ (เผื่อมีหลุดมา)
-    filtered_result = [
-        c for c in found_chapters 
-        if startChapter <= c['chapter'] <= endChapter
-    ]
-    if not filtered_result and found_chapters:
-        print("Warning: Chapters found but not in the requested range.")
-    # duration = time.perf_counter() - start_time
-    # print(f"Mapping finished in {duration:.3f} seconds")
-    return {
-        "chapters": filtered_result
-    }
+#                 if match:
+#                     found_chap_num = int(match.group(1))
+#                     # ถ้ามีตอนเก่าค้างอยู่ (เช่นเจอตอน 2 แล้วกำลังจะเริ่มตอน 2) -> ให้บันทึกตอนที่ 1
+#                     if currentChapter is not None:
+#                         found_chapters.append({
+#                             "chapter": currentChapter,
+#                             "start_page": currentStart,
+#                             "end_page": i
+#                         })
+#                         # [จุดแก้ไขสำคัญ]: เช็คว่าตอนที่เพิ่งบันทึกจบไป ใช่ตอนสุดท้ายที่ต้องการไหม?
+#                         if currentChapter >= endChapter:
+#                             print(f"DEBUG: Found end of requested chapter {endChapter}. Stopping scan.", flush=True)
+#                             currentChapter = None # Reset เพื่อไม่ให้ไปบันทึกซ้ำด้านล่าง
+#                             break      
+#                     # เริ่มต้น track ตอนใหม่ที่เพิ่งเจอ
+#                     currentChapter = found_chap_num
+#                     currentStart = i+1                
+#                     # หา 500 เจอ 501
+#                     if found_chap_num > endChapter:
+#                         currentChapter = None
+#                         break
+#             # จัดการกรณีวนลูปจบเล่ม หรือ Break ออกมาแล้วยังมีตอนค้างอยู่ (กรณีตอนสุดท้ายของไฟล์)
+#             if currentChapter is not None:
+#                 # ตรวจสอบอีกครั้งว่าตอนที่ค้างอยู่ อยู่ใน range ที่ต้องการไหม
+#                 if currentChapter <= endChapter:
+#                     found_chapters.append({
+#                         "chapter": currentChapter,
+#                         "start_page": currentStart,
+#                         "end_page": len(pdf.pages) 
+#                     })
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Processing Error: {e}")
+#     # Filter ผลลัพธ์ (เผื่อมีหลุดมา)
+#     filtered_result = [
+#         c for c in found_chapters 
+#         if startChapter <= c['chapter'] <= endChapter
+#     ]
+#     if not filtered_result and found_chapters:
+#         print("Warning: Chapters found but not in the requested range.")
+#     # duration = time.perf_counter() - start_time
+#     # print(f"Mapping finished in {duration:.3f} seconds")
+#     return {
+#         "chapters": filtered_result
+#     }
     
 @app.get("/")
 def root():

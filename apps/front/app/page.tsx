@@ -22,6 +22,9 @@ export default function Page() {
 
       <br /><br />
       <Link href="/testTTS">Go to testTTS</Link>
+
+      <br /><br />
+      <Link href="/archive">Go to archive</Link>
     </div>
   );
 }
