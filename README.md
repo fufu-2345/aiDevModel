@@ -43,5 +43,4 @@ npx create-turbo@latest -e with-tailwind
 - [Prettier](https://prettier.io) for code formatting    
   
 netstat -ano | findstr :8000  
-taskkill /PID 21320 /F  
 taskkill /IM python.exe /F 

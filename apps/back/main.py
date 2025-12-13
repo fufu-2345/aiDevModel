@@ -235,7 +235,6 @@ class ChapterUpdate(BaseModel):
     
 @app.put("/chapters/{chapter_id}")
 def update_chapter(chapter_id: int, chapter_data: ChapterUpdate, session: Session = Depends(get_session)):
-    """แก้ไขเนื้อหาตอน"""  
     chapter = session.get(chapterContent, chapter_id)
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
@@ -247,27 +246,19 @@ def update_chapter(chapter_id: int, chapter_data: ChapterUpdate, session: Sessio
     session.refresh(chapter)
     return chapter
 
-
-# def fix_header_with_ollama(header_text: str) -> str:
-#     prompt = (
-#         f"Correct Thai text errors. Focus on identifying chapter titles like 'ตอนที่'.\n"
-#         f"Input: {header_text}\n"
-#         f"Output ONLY the corrected text line."
-#     )
-#     payload = {"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "options": { "num_predict": 50, "temperature": 0.1 }}
-#     try:
-#         response = requests.post(
-#             ollamaURL, 
-#             headers={"Content-Type": "application/json"}, 
-#             data=json.dumps(payload),
-#             timeout=120 
-#         )
-#         response.raise_for_status()
-#         result = response.json()
-#         return result['response'].strip()
-#     except Exception as e:
-#         print(f"Ollama Error (Header): {e}")
-#         return header_text 
+@app.get("/chapters/{chapter_id}", response_model=chapterContent)
+def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
+    chapter = session.get(chapterContent, chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    
+    # print(f"\nvvvvvvvvvvvvvv DEBUG: DATA FOR CHAPTER {chapter_id} vvvvvvvvvvvvvv")
+    # print(f"Title: {chapter.chapterTitle}")
+    # preview_content = chapter.chapterDetail[:100] + "..." if chapter.chapterDetail else "No Content"
+    # print(f"Content Preview: {preview_content}")
+    # print("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n")
+    
+    return chapter
 
 # @app.post("/map-chapters/")
 # async def map_chapters(file: UploadFile = File(...), startChapter: int = Form(...), endChapter: int = Form(...)):
