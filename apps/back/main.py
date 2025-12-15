@@ -14,6 +14,14 @@ import re
 from database import create_db_and_tables, get_session
 from models import movieTitle, chapterContent
 
+try:
+    import torch
+    from diffusers import StableDiffusionPipeline
+    HAS_AI_LIB = True
+except ImportError:
+    HAS_AI_LIB = False
+    print("Warning: 'diffusers' or 'torch' not found. AI Image Generation will not work.")
+    
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_db_and_tables()
@@ -32,31 +40,10 @@ app.add_middleware(
 ollamaURL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "scb10x/typhoon2.1-gemma3-4b:latest"
 
-def process_text_with_ollama(text_input: str) -> str:
-    prompt = (
-        f"Correct the Thai vowel and tone mark encoding errors in the text below. Rules:\n"
-        f"1. Fix all 'sara-loi' (floating vowels) and misplaced tone marks to standard Thai grammar.\n"
-        f"2. Maintain the original meaning and writing style.\n"
-        f"3. CRITICAL: Output ONLY the corrected text. Do not include any introduction, preamble, notes, or conclusion."
-        f"--- my text ---\n"
-        f"{text_input}\n"
-        f"Output ONLY the result."
-    )
-    payload = { "model": OLLAMA_MODEL, "prompt": prompt, "stream": False }
-    try:
-        response = requests.post(
-            ollamaURL, 
-            headers={"Content-Type": "application/json"}, 
-            data=json.dumps(payload),
-            timeout=1500
-        )
-        response.raise_for_status() 
-        result = response.json()
-        return result['response'].strip()
-    except requests.exceptions.RequestException as e:
-        print(f"Error calling Ollama API: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to communicate with Ollama or Ollama failed to process: {e}. "f"Please check if Ollama is running and model '{OLLAMA_MODEL}' is installed.")
-
+class ChapterUpdate(BaseModel):
+    chapterTitle: str
+    chapterDetail: str
+    
 def clean_thai_pdf_text(text: str) -> str:
     if not text:
         return ""
@@ -104,8 +91,7 @@ async def upload_movie(
                     continue
                 
                 cleaned_text = clean_thai_pdf_text(raw_text)
-                
-                lines = cleaned_text.split('\n')
+                lines = raw_text.split('\n')
                 for line in lines[:2]:
                     match = re.search(r'ตอนท ี่\s*(\d+)', line)
                     if match:
@@ -163,48 +149,6 @@ async def upload_movie(
         session.commit()
         raise HTTPException(status_code=500, detail=f"PDF Processing Error: {e}")
 
-@app.post("/process-pdf/")
-async def upload_and_process_pdf(file: UploadFile = File(...), start: int = Form(...), end: int = Form(...)):
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="This is not a PDF file")
-    # start_time = time.perf_counter()
-    file_content = await file.read()
-    correctedPages = [] 
-    total_pages = 0
-    try:
-        with pdfplumber.open(io.BytesIO(file_content)) as pdf:
-            total_pages = len(pdf.pages)
-            if start < 1:
-                raise HTTPException(status_code=400, detail="Start page must be at least 1")
-            if total_pages < end:
-                raise HTTPException(status_code=400, detail=f"PDF has only {total_pages} pages")
-
-            for page_num in range(start, end + 1):
-                page_index = page_num - 1     
-                if 0 <= page_index < total_pages:
-                    raw_text = pdf.pages[page_index].extract_text()
-                    
-                    if raw_text and raw_text.strip():
-                        cleanText = process_text_with_ollama(clean_thai_pdf_text(raw_text)) 
-                        print(cleanText, flush=True)
-                        correctedPages.append(cleanText)
-                    else:
-                        print(f"   >> Page {page_num} is empty or image only.", flush=True)
-                        correctedPages.append(f"--- Page {page_num} ---\n[Empty Page]\n")
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        print(f"ERROR: {e}", flush=True)
-        raise HTTPException(status_code=500, detail=f"PDF Error: {e}")
-    correctedChapter = "\n".join(correctedPages)
-    # duration = time.perf_counter() - start_time
-    # print(f"Total time use: {duration:.3f} seconds", flush=True)
-    return {
-        "filename": file.filename,
-        "pages_processed": f"{start}-{end}",
-        "corrected_text": correctedChapter
-    }
-    
 @app.delete("/movies/{movie_id}")
 def delete_movie(movie_id: int, session: Session = Depends(get_session)):
     movie = session.get(movieTitle, movie_id)
@@ -228,10 +172,6 @@ def get_movie(movie_id: int, session: Session = Depends(get_session)):
 @app.get("/movies/{movie_id}/chapters", response_model=List[chapterContent])
 def get_movie_chapters(movie_id: int, session: Session = Depends(get_session)):
     return session.exec(select(chapterContent).where(chapterContent.movieId == movie_id).order_by(chapterContent.episodeNumber)).all()
-
-class ChapterUpdate(BaseModel):
-    chapterTitle: str
-    chapterDetail: str
     
 @app.put("/chapters/{chapter_id}")
 def update_chapter(chapter_id: int, chapter_data: ChapterUpdate, session: Session = Depends(get_session)):
@@ -252,13 +192,78 @@ def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
     
-    # print(f"\nvvvvvvvvvvvvvv DEBUG: DATA FOR CHAPTER {chapter_id} vvvvvvvvvvvvvv")
-    # print(f"Title: {chapter.chapterTitle}")
+    # print(f"T{chapter.chapterTitle}")
     # preview_content = chapter.chapterDetail[:100] + "..." if chapter.chapterDetail else "No Content"
-    # print(f"Content Preview: {preview_content}")
-    # print("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n")
+    # print(f"{preview_content}")
     
     return chapter
+
+# def process_text_with_ollama(text_input: str) -> str:
+#     prompt = (
+#         f"Correct the Thai vowel and tone mark encoding errors in the text below. Rules:\n"
+#         f"1. Fix all 'sara-loi' (floating vowels) and misplaced tone marks to standard Thai grammar.\n"
+#         f"2. Maintain the original meaning and writing style.\n"
+#         f"3. CRITICAL: Output ONLY the corrected text. Do not include any introduction, preamble, notes, or conclusion."
+#         f"--- my text ---\n"
+#         f"{text_input}\n"
+#         f"Output ONLY the result."
+#     )
+#     payload = { "model": OLLAMA_MODEL, "prompt": prompt, "stream": False }
+#     try:
+#         response = requests.post(
+#             ollamaURL, 
+#             headers={"Content-Type": "application/json"}, 
+#             data=json.dumps(payload),
+#             timeout=1500
+#         )
+#         response.raise_for_status() 
+#         result = response.json()
+#         return result['response'].strip()
+#     except requests.exceptions.RequestException as e:
+#         print(f"Error calling Ollama API: {e}")
+#         raise HTTPException(status_code=500, detail=f"Failed to communicate with Ollama or Ollama failed to process: {e}. "f"Please check if Ollama is running and model '{OLLAMA_MODEL}' is installed.")
+
+# @app.post("/process-pdf/")
+# async def upload_and_process_pdf(file: UploadFile = File(...), start: int = Form(...), end: int = Form(...)):
+#     if not file.filename.endswith(".pdf"):
+#         raise HTTPException(status_code=400, detail="This is not a PDF file")
+#     # start_time = time.perf_counter()
+#     file_content = await file.read()
+#     correctedPages = [] 
+#     total_pages = 0
+#     try:
+#         with pdfplumber.open(io.BytesIO(file_content)) as pdf:
+#             total_pages = len(pdf.pages)
+#             if start < 1:
+#                 raise HTTPException(status_code=400, detail="Start page must be at least 1")
+#             if total_pages < end:
+#                 raise HTTPException(status_code=400, detail=f"PDF has only {total_pages} pages")
+
+#             for page_num in range(start, end + 1):
+#                 page_index = page_num - 1     
+#                 if 0 <= page_index < total_pages:
+#                     raw_text = pdf.pages[page_index].extract_text()
+                    
+#                     if raw_text and raw_text.strip():
+#                         cleanText = process_text_with_ollama(clean_thai_pdf_text(raw_text)) 
+#                         print(cleanText, flush=True)
+#                         correctedPages.append(cleanText)
+#                     else:
+#                         print(f"   >> Page {page_num} is empty or image only.", flush=True)
+#                         correctedPages.append(f"--- Page {page_num} ---\n[Empty Page]\n")
+#     except HTTPException as he:
+#         raise he
+#     except Exception as e:
+#         print(f"ERROR: {e}", flush=True)
+#         raise HTTPException(status_code=500, detail=f"PDF Error: {e}")
+#     correctedChapter = "\n".join(correctedPages)
+#     # duration = time.perf_counter() - start_time
+#     # print(f"Total time use: {duration:.3f} seconds", flush=True)
+#     return {
+#         "filename": file.filename,
+#         "pages_processed": f"{start}-{end}",
+#         "corrected_text": correctedChapter
+#     }
 
 # @app.post("/map-chapters/")
 # async def map_chapters(file: UploadFile = File(...), startChapter: int = Form(...), endChapter: int = Form(...)):
