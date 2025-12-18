@@ -10,17 +10,18 @@ import json
 import io
 import time
 import re
+import fitz 
 
 from database import create_db_and_tables, get_session
 from models import movieTitle, chapterContent
 
-try:
-    import torch
-    from diffusers import StableDiffusionPipeline
-    HAS_AI_LIB = True
-except ImportError:
-    HAS_AI_LIB = False
-    print("Warning: 'diffusers' or 'torch' not found. AI Image Generation will not work.")
+# try:
+#     import torch
+#     from diffusers import StableDiffusionPipeline
+#     HAS_AI_LIB = True
+# except ImportError:
+#     HAS_AI_LIB = False
+#     print("Warning: 'diffusers' or 'torch' not found. AI Image Generation will not work.")
     
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -28,6 +29,7 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
+HAS_FITZ = True
 
 app.add_middleware(
     CORSMiddleware,
@@ -149,6 +151,97 @@ async def upload_movie(
         session.commit()
         raise HTTPException(status_code=500, detail=f"PDF Processing Error: {e}")
 
+@app.post("/upload-movie2/")
+async def upload_movie(
+    title: str = Form(...),
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session)
+):
+    if not HAS_FITZ:
+        raise HTTPException(status_code=500, detail="PyMuPDF (fitz) library is not installed. Please run `pip install pymupdf`")
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="This is not a PDF file")
+    start_time = time.perf_counter()
+    file_content = await file.read()
+    
+    new_movie = movieTitle(movieTitle=title, episodeAmount=0, picPath="")
+    session.add(new_movie)
+    session.commit()
+    session.refresh(new_movie) 
+    
+    try:
+        found_chapters_data = []
+        chapter_map = [] 
+
+        with fitz.open(stream=file_content, filetype="pdf") as doc:
+            total_pages = len(doc)
+            for i, page in enumerate(doc):
+                raw_text = page.get_text()
+                if not raw_text or not raw_text.strip():
+                    continue
+                lines = raw_text.split('\n')
+                
+                for line in lines[:1]:
+                    match = re.search(r'ตอนที่\s*(\d+)', line)
+                    if match:
+                        found_chap_num = int(match.group(1))
+                        if not chapter_map or chapter_map[-1]['num'] != found_chap_num:
+                            chapter_map.append({
+                                'num': found_chap_num,
+                                'start_page': i
+                            })
+                        break 
+            for idx, chap in enumerate(chapter_map):
+                start_p = chap['start_page']
+                end_p = chapter_map[idx+1]['start_page'] - 1 if (idx + 1 < len(chapter_map)) else total_pages - 1
+                chapter_full_content = []
+                chapter_title_text = ""
+                for p_idx in range(start_p, end_p + 1):
+                    page = doc[p_idx]
+                    page_text = clean_thai_pdf_text(page.get_text() or "")
+                    if p_idx == start_p:
+                        lines = page_text.split('\n')
+                        header_found = False
+                        
+                        for line in lines:
+                            if not header_found and re.search(r'ตอนที่\s*' + str(chap['num']), line):
+                                title_match = re.search(r'ตอนที่\s*\d+\s*(.*)', line)
+                                if title_match:
+                                    chapter_title_text = title_match.group(1).strip()
+                                header_found = True
+                            else:
+                                chapter_full_content.append(line)
+                    else:
+                        chapter_full_content.append(page_text)
+                
+                final_title = chapter_title_text if chapter_title_text else f"ตอนที่ {chap['num']}"
+                
+                new_chapter = chapterContent(
+                    episodeNumber=float(chap['num']),
+                    chapterTitle=final_title,
+                    chapterDetail="\n".join(chapter_full_content).strip(),
+                    movieId=new_movie.id
+                )
+                session.add(new_chapter)
+                found_chapters_data.append(new_chapter)
+            new_movie.episodeAmount = len(found_chapters_data)
+            session.add(new_movie)
+            session.commit()
+            print(f"Total time use: {time.perf_counter()-start_time:.3f} seconds", flush=True)
+            return {
+                "status": "success",
+                "movie_id": new_movie.id,
+                "total_chapters_found": len(found_chapters_data),
+                "chapters": [c.chapterTitle for c in found_chapters_data],
+                "engine": "PyMuPDF (fitz)"
+            }
+
+    except Exception as e:
+        print(f"Error processing PDF: {e}")
+        session.delete(new_movie)
+        session.commit()
+        raise HTTPException(status_code=500, detail=f"PDF Processing Error: {e}")
+
 @app.delete("/movies/{movie_id}")
 def delete_movie(movie_id: int, session: Session = Depends(get_session)):
     movie = session.get(movieTitle, movie_id)
@@ -197,31 +290,6 @@ def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
     # print(f"{preview_content}")
     
     return chapter
-
-# def process_text_with_ollama(text_input: str) -> str:
-#     prompt = (
-#         f"Correct the Thai vowel and tone mark encoding errors in the text below. Rules:\n"
-#         f"1. Fix all 'sara-loi' (floating vowels) and misplaced tone marks to standard Thai grammar.\n"
-#         f"2. Maintain the original meaning and writing style.\n"
-#         f"3. CRITICAL: Output ONLY the corrected text. Do not include any introduction, preamble, notes, or conclusion."
-#         f"--- my text ---\n"
-#         f"{text_input}\n"
-#         f"Output ONLY the result."
-#     )
-#     payload = { "model": OLLAMA_MODEL, "prompt": prompt, "stream": False }
-#     try:
-#         response = requests.post(
-#             ollamaURL, 
-#             headers={"Content-Type": "application/json"}, 
-#             data=json.dumps(payload),
-#             timeout=1500
-#         )
-#         response.raise_for_status() 
-#         result = response.json()
-#         return result['response'].strip()
-#     except requests.exceptions.RequestException as e:
-#         print(f"Error calling Ollama API: {e}")
-#         raise HTTPException(status_code=500, detail=f"Failed to communicate with Ollama or Ollama failed to process: {e}. "f"Please check if Ollama is running and model '{OLLAMA_MODEL}' is installed.")
 
 # @app.post("/process-pdf/")
 # async def upload_and_process_pdf(file: UploadFile = File(...), start: int = Form(...), end: int = Form(...)):

@@ -15,9 +15,6 @@ export default function Page() {
       <button onClick={callBackend}>test back</button>
 
       <br /><br />
-      <Link href="/testPDF">Go to testPDF</Link>
-
-      <br /><br />
       <Link href="/extract">Go to extract</Link>
 
       <br /><br />

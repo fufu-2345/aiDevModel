@@ -76,7 +76,7 @@ export default function MovieDashboard() {
         formData.append('title', titleInput);
         formData.append('file', selectedFile);
         try {
-            const res = await fetch('http://127.0.0.1:8000/upload-movie/', { method: 'POST', body: formData });
+            const res = await fetch('http://127.0.0.1:8000/upload-movie2/', { method: 'POST', body: formData });
             if (!res.ok) throw new Error();
             setIsModalOpen(false);
             setTitleInput('');

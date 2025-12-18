@@ -7,7 +7,8 @@ sqlmodel>=0.0.22
 pymysql==1.1.1
 psycopg2-binary
 python-dotenv==1.0.0
-torch==2.2.0
-diffusers==0.26.4
-transformers==4.37.2
-accelerate==0.32.0
+# torch==2.2.0
+# diffusers==0.26.4
+# transformers==4.37.2
+# accelerate==0.32.0
+pymupdf>=1.23.9
