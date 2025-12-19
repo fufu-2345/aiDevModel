@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 from sqlmodel import Session, select
 from pydantic import BaseModel
 from typing import List
-import pdfplumber
 import requests
 import json
 import io
@@ -15,13 +14,8 @@ import fitz
 from database import create_db_and_tables, get_session
 from models import movieTitle, chapterContent
 
-# try:
-#     import torch
-#     from diffusers import StableDiffusionPipeline
-#     HAS_AI_LIB = True
-# except ImportError:
-#     HAS_AI_LIB = False
-#     print("Warning: 'diffusers' or 'torch' not found. AI Image Generation will not work.")
+import torch
+from diffusers import StableDiffusionPipeline
     
 @asynccontextmanager
 async def lifespan(app: FastAPI):

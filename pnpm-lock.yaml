@@ -20,8 +20,6 @@ importers:
 
   apps/back: {}
 
-  apps/back2: {}
-
   apps/front:
     dependencies:
       '@repo/ui':
@@ -43,8 +41,8 @@ importers:
         specifier: ^2.6.0
         version: 2.6.0(react-dom@19.1.0)(react@19.1.0)
       sweetalert2:
-        specifier: ^11.26.4
-        version: 11.26.4
+        specifier: ^11.26.10
+        version: 11.26.10
     devDependencies:
       '@next/eslint-plugin-next':
         specifier: ^15.2.2
@@ -2999,8 +2997,8 @@ packages:
     engines: {node: '>= 0.4'}
     dev: true
 
-  /sweetalert2@11.26.4:
-    resolution: {integrity: sha512-qIgIQOVoz85Xj2Rij+htVFNH+HiIgfSR8ZJsHQvX4p9uLtJveXVqU7vPxJ4Eo6SALnLeo0Sw6COY164Zg3oBiw==}
+  /sweetalert2@11.26.10:
+    resolution: {integrity: sha512-l/aaL9WWbumBOaMvcs4aCKzyQwkQCplSmSGpJD7FuRcSDWZyr2OEDmtcSPj2/w3N2TC2xw48Vg5cL6IkUJnPlQ==}
     dev: false
 
   /tailwindcss@3.4.17:
