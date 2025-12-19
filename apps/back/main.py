@@ -29,7 +29,6 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
-HAS_FITZ = True
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,7 +45,7 @@ class ChapterUpdate(BaseModel):
     chapterTitle: str
     chapterDetail: str
     
-def clean_thai_pdf_text(text: str) -> str:
+def cleanASCII(text: str) -> str:
     if not text:
         return ""
     replace_dict = {
@@ -63,6 +62,27 @@ def clean_thai_pdf_text(text: str) -> str:
         cleaned_text = cleaned_text.replace(pua_char, std_char)
     return cleaned_text
 
+def cleanThaiTypeing(text: str) -> str:
+    if not text:
+        return ""
+    corrections = {
+        "เปิน": "เป็น",
+        "เปญด": "เปิด",
+        "ปฐ": "ปี",
+        "ปญอม": "ป้อม",
+        "ฝฐา": "ฝ่า",
+        "ฝญก": "ฝึก",
+        "ฝฐาย": "ฝ่าย",
+        "ฝฐ": "ฝี",
+        "ฟญน": "ฟืน",    
+        "ฟญา": "ฟ้า",
+        "เฟญง": "เฟิง",
+    }
+    fixed_text = text
+    for wrong_word, correct_word in corrections.items():
+        fixed_text = fixed_text.replace(wrong_word, correct_word)    
+    return fixed_text
+
 @app.get("/movies/", response_model=List[movieTitle])
 def get_movies(session: Session = Depends(get_session)):
     movies = session.exec(select(movieTitle)).all()
@@ -74,91 +94,6 @@ async def upload_movie(
     file: UploadFile = File(...),
     session: Session = Depends(get_session)
 ):
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="This is not a PDF file")
-    start = time.perf_counter()
-    file_content = await file.read()
-    new_movie = movieTitle(movieTitle=title, episodeAmount=0, picPath="")
-    session.add(new_movie)
-    session.commit()
-    session.refresh(new_movie) 
-    try:
-        found_chapters_data = []
-        chapter_map = []
-        with pdfplumber.open(io.BytesIO(file_content)) as pdf:
-            total_pages = len(pdf.pages)
-            for i, page in enumerate(pdf.pages):
-                raw_text = page.extract_text()
-                if not raw_text or not raw_text.strip():
-                    continue
-                
-                cleaned_text = clean_thai_pdf_text(raw_text)
-                lines = raw_text.split('\n')
-                for line in lines[:2]:
-                    match = re.search(r'ตอนท ี่\s*(\d+)', line)
-                    if match:
-                        found_chap_num = int(match.group(1))
-                        if not chapter_map or chapter_map[-1]['num'] != found_chap_num:
-                            chapter_map.append({
-                                'num': found_chap_num,
-                                'start_page': i
-                            })
-                        break 
-            for idx, chap in enumerate(chapter_map):
-                start_p = chap['start_page']
-                end_p = chapter_map[idx+1]['start_page'] - 1 if (idx + 1 < len(chapter_map)) else total_pages - 1
-                chapter_full_content = []
-                chapter_title_text = ""
-                
-                for p_idx in range(start_p, end_p + 1):
-                    page = pdf.pages[p_idx]
-                    page_text = clean_thai_pdf_text(page.extract_text() or "")                    
-                    if p_idx == start_p:
-                        lines = page_text.split('\n')
-                        header_found = False                       
-                        for line in lines:
-                            if not header_found and re.search(r'ตอนท ี่\s*' + str(chap['num']), line):
-                                title_match = re.search(r'ตอนท ี่\s*\d+\s*(.*)', line)
-                                if title_match:
-                                    chapter_title_text = title_match.group(1).strip()
-                                header_found = True
-                            else:
-                                chapter_full_content.append(line)
-                    else:
-                        chapter_full_content.append(page_text)
-                final_title = chapter_title_text if chapter_title_text else f"ตอนที่ {chap['num']}"               
-                new_chapter = chapterContent(
-                    episodeNumber=float(chap['num']),
-                    chapterTitle=final_title,
-                    chapterDetail="\n".join(chapter_full_content).strip(),
-                    movieId=new_movie.id
-                )
-                session.add(new_chapter)
-                found_chapters_data.append(new_chapter)
-            new_movie.episodeAmount = len(found_chapters_data)
-            session.add(new_movie)
-            session.commit()   
-            print(f"total time: {time.perf_counter() - start:.3f} seconds")
-            return {
-                "status": "success",
-                "movie_id": new_movie.id,
-                "total_chapters_found": len(found_chapters_data),
-                "chapters": [c.chapterTitle for c in found_chapters_data]
-            }
-    except Exception as e:
-        print(f"Error processing PDF: {e}")
-        session.delete(new_movie)
-        session.commit()
-        raise HTTPException(status_code=500, detail=f"PDF Processing Error: {e}")
-
-@app.post("/upload-movie2/")
-async def upload_movie(
-    title: str = Form(...),
-    file: UploadFile = File(...),
-    session: Session = Depends(get_session)
-):
-    if not HAS_FITZ:
-        raise HTTPException(status_code=500, detail="PyMuPDF (fitz) library is not installed. Please run `pip install pymupdf`")
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="This is not a PDF file")
     start_time = time.perf_counter()
@@ -179,6 +114,7 @@ async def upload_movie(
                 raw_text = page.get_text()
                 if not raw_text or not raw_text.strip():
                     continue
+                
                 lines = raw_text.split('\n')
                 
                 for line in lines[:1]:
@@ -198,7 +134,8 @@ async def upload_movie(
                 chapter_title_text = ""
                 for p_idx in range(start_p, end_p + 1):
                     page = doc[p_idx]
-                    page_text = clean_thai_pdf_text(page.get_text() or "")
+                    page_text = cleanASCII(page.get_text() or "")
+                    page_text = cleanThaiTypeing(page_text)
                     if p_idx == start_p:
                         lines = page_text.split('\n')
                         header_found = False
@@ -233,7 +170,6 @@ async def upload_movie(
                 "movie_id": new_movie.id,
                 "total_chapters_found": len(found_chapters_data),
                 "chapters": [c.chapterTitle for c in found_chapters_data],
-                "engine": "PyMuPDF (fitz)"
             }
 
     except Exception as e:
@@ -291,48 +227,6 @@ def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
     
     return chapter
 
-# @app.post("/process-pdf/")
-# async def upload_and_process_pdf(file: UploadFile = File(...), start: int = Form(...), end: int = Form(...)):
-#     if not file.filename.endswith(".pdf"):
-#         raise HTTPException(status_code=400, detail="This is not a PDF file")
-#     # start_time = time.perf_counter()
-#     file_content = await file.read()
-#     correctedPages = [] 
-#     total_pages = 0
-#     try:
-#         with pdfplumber.open(io.BytesIO(file_content)) as pdf:
-#             total_pages = len(pdf.pages)
-#             if start < 1:
-#                 raise HTTPException(status_code=400, detail="Start page must be at least 1")
-#             if total_pages < end:
-#                 raise HTTPException(status_code=400, detail=f"PDF has only {total_pages} pages")
-
-#             for page_num in range(start, end + 1):
-#                 page_index = page_num - 1     
-#                 if 0 <= page_index < total_pages:
-#                     raw_text = pdf.pages[page_index].extract_text()
-                    
-#                     if raw_text and raw_text.strip():
-#                         cleanText = process_text_with_ollama(clean_thai_pdf_text(raw_text)) 
-#                         print(cleanText, flush=True)
-#                         correctedPages.append(cleanText)
-#                     else:
-#                         print(f"   >> Page {page_num} is empty or image only.", flush=True)
-#                         correctedPages.append(f"--- Page {page_num} ---\n[Empty Page]\n")
-#     except HTTPException as he:
-#         raise he
-#     except Exception as e:
-#         print(f"ERROR: {e}", flush=True)
-#         raise HTTPException(status_code=500, detail=f"PDF Error: {e}")
-#     correctedChapter = "\n".join(correctedPages)
-#     # duration = time.perf_counter() - start_time
-#     # print(f"Total time use: {duration:.3f} seconds", flush=True)
-#     return {
-#         "filename": file.filename,
-#         "pages_processed": f"{start}-{end}",
-#         "corrected_text": correctedChapter
-#     }
-
 # @app.post("/map-chapters/")
 # async def map_chapters(file: UploadFile = File(...), startChapter: int = Form(...), endChapter: int = Form(...)):
 #     # start_time = time.perf_counter()
@@ -352,7 +246,7 @@ def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
 #                 if not raw_text or not raw_text.strip():
 #                     continue
                 
-#                 cleaned_text = clean_thai_pdf_text(raw_text)               
+#                 cleaned_text = cleanASCII(raw_text)               
 #                 # short_header = cleaned_text[:20].replace('\n', ' ')      
 #                 # corrected_header = fix_header_with_ollama(short_header)
 #                 match = re.search(r'ตอนท ี่\s*(\d+)', cleaned_text)
