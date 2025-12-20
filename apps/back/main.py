@@ -10,12 +10,14 @@ import io
 import time
 import re
 import fitz 
-
-from database import create_db_and_tables, get_session
-from models import movieTitle, chapterContent
+import httpx
+from googletrans import Translator
 
 import torch
 from diffusers import StableDiffusionPipeline
+
+from database import create_db_and_tables, get_session
+from models import movieTitle, chapterContent
     
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -23,6 +25,7 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
+translator = Translator()
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,7 +36,7 @@ app.add_middleware(
 )
 
 ollamaURL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "scb10x/typhoon2.1-gemma3-4b:latest"
+OLLAMA_MODEL = "gemma2:9b"
 
 class ChapterUpdate(BaseModel):
     chapterTitle: str
@@ -185,6 +188,17 @@ def delete_movie(movie_id: int, session: Session = Depends(get_session)):
     session.commit()
     return {"ok": True}
 
+@app.get("/movies/{movie_id}", response_model=movieTitle)
+def get_movie(movie_id: int, session: Session = Depends(get_session)):
+    movie = session.get(movieTitle, movie_id)
+    if not movie:
+        raise HTTPException(status_code=404, detail="Movie not found")
+    return movie
+
+@app.get("/movies/{movie_id}/chapters", response_model=List[chapterContent])
+def get_movie_chapters(movie_id: int, session: Session = Depends(get_session)):
+    return session.exec(select(chapterContent).where(chapterContent.movieId == movie_id).order_by(chapterContent.episodeNumber)).all()#แก้ให้เอาแค่เกือบครบ
+
 @app.put("/chapters/{chapter_id}")
 def update_chapter(chapter_id: int, chapter_data: ChapterUpdate, session: Session = Depends(get_session)):
     chapter = session.get(chapterContent, chapter_id)
@@ -196,6 +210,59 @@ def update_chapter(chapter_id: int, chapter_data: ChapterUpdate, session: Sessio
     session.add(chapter)
     session.commit()
     session.refresh(chapter)
+    return chapter
+
+@app.get("/chapters/{chapter_id}", response_model=chapterContent)
+def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
+    chapter = session.get(chapterContent, chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    
+    # print(f"T{chapter.chapterTitle}")
+    # preview_content = chapter.chapterDetail[:100] + "..." if chapter.chapterDetail else "No Content"
+    # print(f"{preview_content}")
+    return chapter
+
+@app.get("/chapters2/{chapter_id}", response_model=chapterContent)
+async def get_chapter_translated_summary(chapter_id: int, session: Session = Depends(get_session)):
+    chapter = session.get(chapterContent, chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    
+    original_text = chapter.chapterDetail 
+    full_translated_text = ""
+    if original_text:
+        chunks = original_text.split("\n\n")
+        translated_chunks = []
+        for chunk in chunks:
+            if chunk.strip():
+                try:
+                    result = await translator.translate(chunk, dest='en') 
+                    translated_chunks.append(result.text)
+                except Exception as e:
+                    translated_chunks.append(chunk)
+            else:
+                translated_chunks.append("")
+        full_translated_text = "\n\n".join(translated_chunks)
+        
+    if full_translated_text:
+        try:
+            ollama_prompt = f"Summarize the entire plot of this in one long sentence, return only one sentence.\n\nSource Text:\n{full_translated_text}"
+            payload = {
+                "model": OLLAMA_MODEL,
+                "prompt": ollama_prompt,
+                "stream": False
+            }
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                response = await client.post(ollamaURL, json=payload)
+                response.raise_for_status()
+                ollama_result = response.json().get("response", "")
+                chapter.chapterDetailEng = ollama_result
+                session.add(chapter)
+                session.commit()
+                session.refresh(chapter)
+        except Exception as e:
+            chapter.chapterDetail = full_translated_text
     return chapter
 
 # @app.post("/map-chapters/")

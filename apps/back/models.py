@@ -13,6 +13,7 @@ class chapterContent(SQLModel, table=True):
     episodeNumber: float 
     chapterTitle: str                     
     chapterDetail: str = Field(default="")   
+    chapterDetailEng: str = Field(default="")   
     picPath: str = Field(default="")      
     vdoPath: str = Field(default="")               
     movieId: Optional[int] = Field(default=None, foreign_key="movietitle.id")
