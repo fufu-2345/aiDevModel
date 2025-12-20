@@ -185,17 +185,6 @@ def delete_movie(movie_id: int, session: Session = Depends(get_session)):
     session.commit()
     return {"ok": True}
 
-@app.get("/movies/{movie_id}", response_model=movieTitle)
-def get_movie(movie_id: int, session: Session = Depends(get_session)):
-    movie = session.get(movieTitle, movie_id)
-    if not movie:
-        raise HTTPException(status_code=404, detail="Movie not found")
-    return movie
-
-@app.get("/movies/{movie_id}/chapters", response_model=List[chapterContent])
-def get_movie_chapters(movie_id: int, session: Session = Depends(get_session)):
-    return session.exec(select(chapterContent).where(chapterContent.movieId == movie_id).order_by(chapterContent.episodeNumber)).all()
-    
 @app.put("/chapters/{chapter_id}")
 def update_chapter(chapter_id: int, chapter_data: ChapterUpdate, session: Session = Depends(get_session)):
     chapter = session.get(chapterContent, chapter_id)
@@ -207,18 +196,6 @@ def update_chapter(chapter_id: int, chapter_data: ChapterUpdate, session: Sessio
     session.add(chapter)
     session.commit()
     session.refresh(chapter)
-    return chapter
-
-@app.get("/chapters/{chapter_id}", response_model=chapterContent)
-def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
-    chapter = session.get(chapterContent, chapter_id)
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-    
-    # print(f"T{chapter.chapterTitle}")
-    # preview_content = chapter.chapterDetail[:100] + "..." if chapter.chapterDetail else "No Content"
-    # print(f"{preview_content}")
-    
     return chapter
 
 # @app.post("/map-chapters/")
