@@ -36,7 +36,8 @@ app.add_middleware(
 )
 
 ollamaURL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "gemma2:9b"
+transModel = "gemma2:9b"
+stabilityModel = "C:\stability matrix\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
 
 class ChapterUpdate(BaseModel):
     chapterTitle: str
@@ -199,6 +200,37 @@ def get_movie(movie_id: int, session: Session = Depends(get_session)):
 def get_movie_chapters(movie_id: int, session: Session = Depends(get_session)):
     return session.exec(select(chapterContent).where(chapterContent.movieId == movie_id).order_by(chapterContent.episodeNumber)).all()#แก้ให้เอาแค่เกือบครบ
 
+@app.get("/genPic/{chapterId}")
+def genPic(chapterId: int, session: Session = Depends(get_session)):
+    print("111111")
+    try:
+        statement = select(chapterContent.chapterDetailEng).where(chapterContent.id == chapterId)
+        prompt = session.exec(statement).first()
+        #print(prompt)
+        
+        # gen picture
+        pipe = StableDiffusionPipeline.from_single_file(
+            stabilityModel,
+            use_safetensors=True
+        )
+
+        pipe.to("cpu") # gpu ? cuda : cpu
+        negative_prompt = "blurry, low quality, distorted"
+
+        image = pipe(
+            prompt, 
+            negative_prompt=negative_prompt, 
+            num_inference_steps=20,  
+            height=320, # 1280/4
+            width=180 # 720/4
+        ).images[0]
+
+        output_filename = f"storage/thumbnail/{chapterId}.png"
+        image.save(output_filename)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Processing Error: {e}")
+    return {image}
+
 @app.put("/chapters/{chapter_id}")
 def update_chapter(chapter_id: int, chapter_data: ChapterUpdate, session: Session = Depends(get_session)):
     chapter = session.get(chapterContent, chapter_id)
@@ -249,7 +281,7 @@ async def get_chapter_translated_summary(chapter_id: int, session: Session = Dep
         try:
             ollama_prompt = f"Summarize the entire plot of this in one long sentence, return only one sentence.\n\nSource Text:\n{full_translated_text}"
             payload = {
-                "model": OLLAMA_MODEL,
+                "model": transModel,
                 "prompt": ollama_prompt,
                 "stream": False
             }

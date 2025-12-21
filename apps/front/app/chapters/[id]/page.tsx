@@ -48,10 +48,8 @@ export default function ChapterListPage({ params }: { params: Promise<{ id: stri
     const movieId = resolvedParams.id;
     const router = useRouter();
 
-
     useEffect(() => {
         if (!movieId) return;
-
         const fetchData = async () => {
             try {
                 // Fetch Movie Data
@@ -133,6 +131,9 @@ export default function ChapterListPage({ params }: { params: Promise<{ id: stri
                             <p className="text-gray-500 leading-relaxed max-w-2xl">
                                 Select a chapter below to start reading or editing the content.
                             </p>
+                            <div onClick={()=>{console.log("11111");}} className="mt-6 inline-block px-5 py-2 bg-blue-600 text-white rounded-full shadow-md hover:bg-blue-700 cursor-pointer transition">
+                                test
+                            </div>
                         </div>
                     </div>
                 </div>

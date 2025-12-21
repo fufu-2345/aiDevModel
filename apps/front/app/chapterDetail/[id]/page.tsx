@@ -11,7 +11,7 @@ const SaveIcon = ({ className }: { className?: string }) => (<svg xmlns="http://
 interface Chapter { id: number; episodeNumber: number; chapterTitle: string; chapterDetail: string; movieId: number; }
 
 export default function ChapterReaderPage({ params }: { params: Promise<{ id: string }> }) {
-    const [chapter, setChapter] = useState<Chapter | null>(null);
+    const [chapter, setChapter] = useState<Chapter | null>(null); // maina data
     const [loading, setLoading] = useState(true);
     const [isEditing, setIsEditing] = useState(false);
     const [editTitle, setEditTitle] = useState("");
@@ -41,6 +41,23 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
         };
         fetchChapter();
     }, [chapterId]);
+
+    const genPic = async () => {
+            try {
+                const response = await fetch(`http://127.0.0.1:8000/genPic/${chapterId}`, {
+                    method: 'GET',
+                }
+                );
+                if (response.ok) {
+                    toast.success("Image generation started!");
+                } else {
+                    toast.error("Failed to start image generation.");
+                }
+            } catch (error) {
+                console.error("Error:", error);
+                toast.error("An error occurred while starting image generation.");
+            }
+        }
 
     const handleSave = async () => {
         if (!chapterId) return;
@@ -96,6 +113,9 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                             <button onClick={() => setIsEditing(true)} className="px-4 py-2 border rounded-lg flex gap-2"><EditIcon className="w-4 h-4" /> Edit</button>
                         )}
                     </div>
+                </div>
+                <div>
+                    <div onClick={()=>{console.log(chapterId);genPic();}}>generate new pice</div>
                 </div>
                 <div className="flex-1 p-8">
                     {isEditing ? (
