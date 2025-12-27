@@ -43,11 +43,12 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
     }, [chapterId]);
 
     const genPic = async () => {
+        console.log("bbbbbb");
             try {
                 const response = await fetch(`http://127.0.0.1:8000/genPic/${chapterId}`, {
                     method: 'GET',
-                }
-                );
+                });
+                console.log(response, "aaaaa");
                 if (response.ok) {
                     toast.success("Image generation started!");
                 } else {

@@ -38,6 +38,7 @@ app.add_middleware(
 ollamaURL = "http://localhost:11434/api/generate"
 transModel = "gemma2:9b"
 stabilityModel = "C:\stability matrix\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
+# stabilityModel = r"C:\stability matrix\Data\Models\StableDiffusion\gameiconinstitute_v10.ckpt"
 
 class ChapterUpdate(BaseModel):
     chapterTitle: str
@@ -200,36 +201,74 @@ def get_movie(movie_id: int, session: Session = Depends(get_session)):
 def get_movie_chapters(movie_id: int, session: Session = Depends(get_session)):
     return session.exec(select(chapterContent).where(chapterContent.movieId == movie_id).order_by(chapterContent.episodeNumber)).all()#แก้ให้เอาแค่เกือบครบ
 
+
 @app.get("/genPic/{chapterId}")
 def genPic(chapterId: int, session: Session = Depends(get_session)):
-    print("111111")
+    start = time.perf_counter()
+    print(f"Generating picture for Chapter {chapterId}")
+
     try:
-        statement = select(chapterContent.chapterDetailEng).where(chapterContent.id == chapterId)
-        prompt = session.exec(statement).first()
-        #print(prompt)
+        # 1. Get Chapter & Prompt
+        chapter = session.get(chapterContent, chapterId)
+        if not chapter:
+            raise HTTPException(status_code=404, detail="Chapter not found")
         
-        # gen picture
+        # ✅ แก้ไข: ใช้ chapterDetailEng เป็น prompt ถ้ามี ถ้าไม่มีให้ใช้ chapterTitle
+        prompt = getattr(chapter, "chapterDetailEng", None)
+        if not prompt:
+            print("Warning: chapterDetailEng not found or empty, falling back to chapterTitle")
+            prompt = chapter.chapterTitle
+        
+        if not prompt:
+            prompt = "Fantasy illustration, high quality"
+
+        print(f"Prompt: {prompt}")
+        
+        # 2. Configure Model
+        # ใช้ Raw String (r"...") เพื่อป้องกันปัญหา Path Windows
+        stabilityModel = r"C:\stability matrix\Data\Models\StableDiffusion\gameiconinstitute_v10.ckpt"
+        
+        # 3. Load Pipeline
+        print("Loading Pipeline...")
         pipe = StableDiffusionPipeline.from_single_file(
             stabilityModel,
-            use_safetensors=True
+            use_safetensors=False, # .ckpt
+            load_safety_checker=False 
         )
+        
+        # ✅ ปิด Safety Checker เพื่อแก้ปัญหา NSFW black image
+        pipe.safety_checker = None
+        pipe.requires_safety_checker = False
 
-        pipe.to("cpu") # gpu ? cuda : cpu
-        negative_prompt = "blurry, low quality, distorted"
-
+        pipe.to("cpu") 
+        negative_prompt = "blurry, low quality, distorted, text, watermark"
+        
+        # 4. Generate Image
+        print("Starting Inference...")
         image = pipe(
-            prompt, 
+            prompt=prompt, 
             negative_prompt=negative_prompt, 
-            num_inference_steps=20,  
-            height=320, # 1280/4
-            width=180 # 720/4
+            num_inference_steps=30,  
+            height=320, # ตามที่คุณขอ
+            width=640   # ตามที่คุณขอ
         ).images[0]
-
+        
         output_filename = f"storage/thumbnail/{chapterId}.png"
         image.save(output_filename)
+        print(f"Saved to: {output_filename}")
+
+        # 6. Update Database
+        # path สำหรับ Frontend ต้องเริ่มด้วย /storage/...
+        chapter.picPath = f"/storage/thumbnail/{chapterId}.png"
+        session.add(chapter)
+        session.commit()
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Processing Error: {e}")
-    return {image}
+        print(f"❌ Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Processing Error: {str(e)}")
+
+    print(f"Time: {time.perf_counter() - start:.3f} seconds")
+    return {"status": "success", "path": output_filename}
 
 @app.put("/chapters/{chapter_id}")
 def update_chapter(chapter_id: int, chapter_data: ChapterUpdate, session: Session = Depends(get_session)):
