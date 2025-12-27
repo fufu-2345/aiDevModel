@@ -14,7 +14,7 @@ import httpx
 from googletrans import Translator
 
 import torch
-from diffusers import StableDiffusionPipeline
+from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 
 from database import create_db_and_tables, get_session
 from models import movieTitle, chapterContent
@@ -201,19 +201,13 @@ def get_movie(movie_id: int, session: Session = Depends(get_session)):
 def get_movie_chapters(movie_id: int, session: Session = Depends(get_session)):
     return session.exec(select(chapterContent).where(chapterContent.movieId == movie_id).order_by(chapterContent.episodeNumber)).all()#แก้ให้เอาแค่เกือบครบ
 
-
 @app.get("/genPic/{chapterId}")
 def genPic(chapterId: int, session: Session = Depends(get_session)):
     start = time.perf_counter()
-    print(f"Generating picture for Chapter {chapterId}")
-
     try:
-        # 1. Get Chapter & Prompt
         chapter = session.get(chapterContent, chapterId)
         if not chapter:
             raise HTTPException(status_code=404, detail="Chapter not found")
-        
-        # ✅ แก้ไข: ใช้ chapterDetailEng เป็น prompt ถ้ามี ถ้าไม่มีให้ใช้ chapterTitle
         prompt = getattr(chapter, "chapterDetailEng", None)
         if not prompt:
             print("Warning: chapterDetailEng not found or empty, falling back to chapterTitle")
@@ -221,45 +215,43 @@ def genPic(chapterId: int, session: Session = Depends(get_session)):
         
         if not prompt:
             prompt = "Fantasy illustration, high quality"
+            
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        torch_dtype = torch.float16 if device == "cuda" else torch.float32
+        is_xl = "xl" in stabilityModel.lower()
+        
+        is_safetensors = stabilityModel.endswith(".safetensors")
+        PipelineClass = StableDiffusionXLPipeline if is_xl else StableDiffusionPipeline
 
-        print(f"Prompt: {prompt}")
-        
-        # 2. Configure Model
-        # ใช้ Raw String (r"...") เพื่อป้องกันปัญหา Path Windows
-        stabilityModel = r"C:\stability matrix\Data\Models\StableDiffusion\gameiconinstitute_v10.ckpt"
-        
-        # 3. Load Pipeline
-        print("Loading Pipeline...")
-        pipe = StableDiffusionPipeline.from_single_file(
+        pipe = PipelineClass.from_single_file(
             stabilityModel,
-            use_safetensors=False, # .ckpt
-            load_safety_checker=False 
+            use_safetensors=is_safetensors,
+            torch_dtype=torch_dtype
         )
         
-        # ✅ ปิด Safety Checker เพื่อแก้ปัญหา NSFW black image
-        pipe.safety_checker = None
-        pipe.requires_safety_checker = False
+        if hasattr(pipe, "safety_checker"):
+            pipe.safety_checker = None
+        if hasattr(pipe, "requires_safety_checker"):
+            pipe.requires_safety_checker = False
+        if hasattr(pipe, "watermarker"):
+            pipe.watermarker = None
 
-        pipe.to("cpu") 
-        negative_prompt = "blurry, low quality, distorted, text, watermark"
+        pipe.to(device)
         
-        # 4. Generate Image
-        print("Starting Inference...")
+        negative_prompt = "blurry, low quality, distorted, text, watermark"
+
         image = pipe(
             prompt=prompt, 
             negative_prompt=negative_prompt, 
-            num_inference_steps=30,  
-            height=320, # ตามที่คุณขอ
-            width=640   # ตามที่คุณขอ
+            num_inference_steps=20,
+            height=720,
+            width=1280 
         ).images[0]
         
-        output_filename = f"storage/thumbnail/{chapterId}.png"
-        image.save(output_filename)
-        print(f"Saved to: {output_filename}")
-
-        # 6. Update Database
-        # path สำหรับ Frontend ต้องเริ่มด้วย /storage/...
-        chapter.picPath = f"/storage/thumbnail/{chapterId}.png"
+        outputFilename = f"storage/thumbnail/{chapterId}.png"
+        image.save(outputFilename)
+        
+        chapter.picPath = outputFilename
         session.add(chapter)
         session.commit()
 
@@ -268,7 +260,7 @@ def genPic(chapterId: int, session: Session = Depends(get_session)):
         raise HTTPException(status_code=500, detail=f"Processing Error: {str(e)}")
 
     print(f"Time: {time.perf_counter() - start:.3f} seconds")
-    return {"status": "success", "path": output_filename}
+    return {"status": "success", "path": outputFilename}
 
 @app.put("/chapters/{chapter_id}")
 def update_chapter(chapter_id: int, chapter_data: ChapterUpdate, session: Session = Depends(get_session)):
