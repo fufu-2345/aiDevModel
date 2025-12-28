@@ -203,6 +203,51 @@ def get_movie(movie_id: int, session: Session = Depends(get_session)):
 def get_movie_chapters(movie_id: int, session: Session = Depends(get_session)):
     return session.exec(select(chapterContent).where(chapterContent.movieId == movie_id).order_by(chapterContent.episodeNumber)).all()#แก้ให้เอาแค่เกือบครบ
 
+
+@app.get("/extract/{chapter_id}", response_model=chapterContent)
+async def get_chapter_translated_summary(chapter_id: int, session: Session = Depends(get_session)):
+    start = time.perf_counter()
+    chapter = session.get(chapterContent, chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    
+    original_text = chapter.chapterDetail 
+    full_translated_text = ""
+    if original_text:
+        chunks = original_text.split("\n\n")
+        translated_chunks = []
+        for chunk in chunks:
+            if chunk.strip():
+                try:
+                    result = await translator.translate(chunk, dest='en') 
+                    translated_chunks.append(result.text)
+                except Exception as e:
+                    translated_chunks.append(chunk)
+            else:
+                translated_chunks.append("")
+        full_translated_text = "\n\n".join(translated_chunks)
+        
+    if full_translated_text:
+        try:
+            prompt = f"Summarize the entire plot of this in one long sentence, return only one sentence.\n\nSource Text:\n{full_translated_text}"
+            payload = {
+                "model": transModel,
+                "prompt": prompt,
+                "stream": False
+            }
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                response = await client.post(ollamaURL, json=payload)
+                response.raise_for_status()
+                ollama_result = response.json().get("response", "")
+                chapter.chapterDetailEng = ollama_result
+                session.add(chapter)
+                session.commit()
+                session.refresh(chapter)
+        except Exception as e:
+            chapter.chapterDetail = full_translated_text
+    print(f"extract time: {time.perf_counter() - start:.3f} seconds")
+    return chapter
+
 @app.get("/genPic/{chapterId}")
 def genPic(chapterId: int, session: Session = Depends(get_session)):
     start = time.perf_counter()
@@ -245,12 +290,12 @@ def genPic(chapterId: int, session: Session = Depends(get_session)):
             prompt=prompt, 
             negative_prompt=negative_prompt, 
             num_inference_steps=20,
-            height=360, # 1280/2
-            width=640  # 640/2
+            height=640, # 640/2
+            width=1280  # 1280/2
         ).images[0]
         
-        outputFilename = f"public/storage/thumbnail/{chapterId}.png"
-        image.save(outputFilename)
+        outputFilename = f"storage/thumbnail/{chapterId}.png"
+        image.save("public/"+outputFilename)
         
         chapter.picPath = outputFilename
         session.add(chapter)
@@ -260,7 +305,7 @@ def genPic(chapterId: int, session: Session = Depends(get_session)):
         print(f"❌ Error: {e}")
         raise HTTPException(status_code=500, detail=f"Processing Error: {str(e)}")
 
-    print(f"Time: {time.perf_counter() - start:.3f} seconds")
+    print(f"genPic Time: {time.perf_counter() - start:.3f} seconds")
     return {"status": "success", "path": outputFilename}
 
 @app.put("/chapters/{chapter_id}")
@@ -285,48 +330,6 @@ def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
     # print(f"T{chapter.chapterTitle}")
     # preview_content = chapter.chapterDetail[:100] + "..." if chapter.chapterDetail else "No Content"
     # print(f"{preview_content}")
-    return chapter
-
-@app.get("/chapters2/{chapter_id}", response_model=chapterContent)
-async def get_chapter_translated_summary(chapter_id: int, session: Session = Depends(get_session)):
-    chapter = session.get(chapterContent, chapter_id)
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-    
-    original_text = chapter.chapterDetail 
-    full_translated_text = ""
-    if original_text:
-        chunks = original_text.split("\n\n")
-        translated_chunks = []
-        for chunk in chunks:
-            if chunk.strip():
-                try:
-                    result = await translator.translate(chunk, dest='en') 
-                    translated_chunks.append(result.text)
-                except Exception as e:
-                    translated_chunks.append(chunk)
-            else:
-                translated_chunks.append("")
-        full_translated_text = "\n\n".join(translated_chunks)
-        
-    if full_translated_text:
-        try:
-            ollama_prompt = f"Summarize the entire plot of this in one long sentence, return only one sentence.\n\nSource Text:\n{full_translated_text}"
-            payload = {
-                "model": transModel,
-                "prompt": ollama_prompt,
-                "stream": False
-            }
-            async with httpx.AsyncClient(timeout=600.0) as client:
-                response = await client.post(ollamaURL, json=payload)
-                response.raise_for_status()
-                ollama_result = response.json().get("response", "")
-                chapter.chapterDetailEng = ollama_result
-                session.add(chapter)
-                session.commit()
-                session.refresh(chapter)
-        except Exception as e:
-            chapter.chapterDetail = full_translated_text
     return chapter
 
 # @app.post("/map-chapters/")
