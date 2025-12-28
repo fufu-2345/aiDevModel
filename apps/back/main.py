@@ -15,10 +15,11 @@ from googletrans import Translator
 
 import torch
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
+from fastapi.staticfiles import StaticFiles
 
 from database import create_db_and_tables, get_session
 from models import movieTitle, chapterContent
-    
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_db_and_tables()
@@ -39,6 +40,7 @@ ollamaURL = "http://localhost:11434/api/generate"
 transModel = "gemma2:9b"
 stabilityModel = "C:\stability matrix\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
 # stabilityModel = r"C:\stability matrix\Data\Models\StableDiffusion\gameiconinstitute_v10.ckpt"
+app.mount("/static", StaticFiles(directory="public"), name="static")
 
 class ChapterUpdate(BaseModel):
     chapterTitle: str
@@ -237,18 +239,17 @@ def genPic(chapterId: int, session: Session = Depends(get_session)):
             pipe.watermarker = None
 
         pipe.to(device)
-        
         negative_prompt = "blurry, low quality, distorted, text, watermark"
 
         image = pipe(
             prompt=prompt, 
             negative_prompt=negative_prompt, 
             num_inference_steps=20,
-            height=720,
-            width=1280 
+            height=360, # 1280/2
+            width=640  # 640/2
         ).images[0]
         
-        outputFilename = f"storage/thumbnail/{chapterId}.png"
+        outputFilename = f"public/storage/thumbnail/{chapterId}.png"
         image.save(outputFilename)
         
         chapter.picPath = outputFilename
