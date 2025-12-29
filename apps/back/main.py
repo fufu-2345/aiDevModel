@@ -7,6 +7,7 @@ from typing import List
 import requests
 import json
 import io
+import os
 import time
 import re
 import fitz 
@@ -39,14 +40,13 @@ app.add_middleware(
 ollamaURL = "http://localhost:11434/api/generate"
 transModel = "gemma2:9b"
 stabilityModel = "C:\stability matrix\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
-# stabilityModel = r"C:\stability matrix\Data\Models\StableDiffusion\gameiconinstitute_v10.ckpt"
 app.mount("/static", StaticFiles(directory="public"), name="static")
 
 class ChapterUpdate(BaseModel):
     chapterTitle: str
     chapterDetail: str
     
-def cleanASCII(text: str) -> str:
+def clearASCII(text: str) -> str:
     if not text:
         return ""
     replace_dict = {
@@ -58,12 +58,12 @@ def cleanASCII(text: str) -> str:
         '\uf714': 'ึ', '\uf715': 'ื', '\uf716': 'ุ', '\uf717': 'ู',
         '\uf718': 'ุ', '\uf719': 'ู', '\uf71a': '็',
     }
-    cleaned_text = text
+    clearedText = text
     for pua_char, std_char in replace_dict.items():
-        cleaned_text = cleaned_text.replace(pua_char, std_char)
-    return cleaned_text
+        clearedText = clearedText.replace(pua_char, std_char)
+    return clearedText
 
-def cleanThaiTypeing(text: str) -> str:
+def clearThaiTypeing(text: str) -> str:
     if not text:
         return ""
     corrections = {
@@ -83,6 +83,13 @@ def cleanThaiTypeing(text: str) -> str:
     for wrong_word, correct_word in corrections.items():
         fixed_text = fixed_text.replace(wrong_word, correct_word)    
     return fixed_text
+
+def clearNewline(text: str) -> str:
+    def replacer(match):
+        if " \n" in match.group():
+            return "\n"
+        return " "
+    return re.sub(r"(?: \n)+|\n", replacer, text)
 
 @app.get("/movies/", response_model=List[movieTitle])
 def get_movies(session: Session = Depends(get_session)):
@@ -135,8 +142,9 @@ async def upload_movie(
                 chapter_title_text = ""
                 for p_idx in range(start_p, end_p + 1):
                     page = doc[p_idx]
-                    page_text = cleanASCII(page.get_text() or "")
-                    page_text = cleanThaiTypeing(page_text)
+                    page_text = clearASCII(page.get_text() or "")
+                    page_text = clearThaiTypeing(page_text)
+                    page_text = clearNewline(page_text)
                     if p_idx == start_p:
                         lines = page_text.split('\n')
                         header_found = False
@@ -165,7 +173,7 @@ async def upload_movie(
             new_movie.episodeAmount = len(found_chapters_data)
             session.add(new_movie)
             session.commit()
-            print(f"Total time use: {time.perf_counter()-start_time:.3f} seconds", flush=True)
+            print(f"Upload time use: {time.perf_counter()-start_time:.3f} seconds", flush=True)
             return {
                 "status": "success",
                 "movie_id": new_movie.id,
@@ -192,6 +200,7 @@ def delete_movie(movie_id: int, session: Session = Depends(get_session)):
     session.commit()
     return {"ok": True}
 
+# หน้า chapter
 @app.get("/movies/{movie_id}", response_model=movieTitle)
 def get_movie(movie_id: int, session: Session = Depends(get_session)):
     movie = session.get(movieTitle, movie_id)
@@ -199,10 +208,10 @@ def get_movie(movie_id: int, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Movie not found")
     return movie
 
+# หน้า chapter
 @app.get("/movies/{movie_id}/chapters", response_model=List[chapterContent])
 def get_movie_chapters(movie_id: int, session: Session = Depends(get_session)):
     return session.exec(select(chapterContent).where(chapterContent.movieId == movie_id).order_by(chapterContent.episodeNumber)).all()#แก้ให้เอาแค่เกือบครบ
-
 
 @app.get("/extract/{chapter_id}", response_model=chapterContent)
 async def get_chapter_translated_summary(chapter_id: int, session: Session = Depends(get_session)):
@@ -261,7 +270,8 @@ def genPic(chapterId: int, session: Session = Depends(get_session)):
             prompt = chapter.chapterTitle
         
         if not prompt:
-            prompt = "Fantasy illustration, high quality"
+            print(f"Error: no promt for "+chapterId)
+            raise HTTPException(status_code=500, detail=f"Error: no promt for "+chapterId)
             
         device = "cuda" if torch.cuda.is_available() else "cpu"
         torch_dtype = torch.float16 if device == "cuda" else torch.float32
@@ -270,11 +280,13 @@ def genPic(chapterId: int, session: Session = Depends(get_session)):
         is_safetensors = stabilityModel.endswith(".safetensors")
         PipelineClass = StableDiffusionXLPipeline if is_xl else StableDiffusionPipeline
 
+        ################################################ ช้าถ้าเลือก model ได้แล้วอย่าลืมดึงออกไปไว้ global
         pipe = PipelineClass.from_single_file(
             stabilityModel,
             use_safetensors=is_safetensors,
             torch_dtype=torch_dtype
         )
+        ################################################
         
         if hasattr(pipe, "safety_checker"):
             pipe.safety_checker = None
@@ -302,7 +314,7 @@ def genPic(chapterId: int, session: Session = Depends(get_session)):
         session.commit()
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=f"Processing Error: {str(e)}")
 
     print(f"genPic Time: {time.perf_counter() - start:.3f} seconds")
@@ -326,11 +338,46 @@ def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
     chapter = session.get(chapterContent, chapter_id)
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
-    
-    # print(f"T{chapter.chapterTitle}")
-    # preview_content = chapter.chapterDetail[:100] + "..." if chapter.chapterDetail else "No Content"
-    # print(f"{preview_content}")
     return chapter
+
+@app.get("/tempReadPDF")
+def readddpdf(file_path: str = "คัมภีร์วิถีเซียน0001-0500.pdf"):
+    path = file_path.strip('"').strip("'") 
+    try:
+        result = ""
+        with fitz.open(path) as doc:
+            for page_num, page in enumerate(doc):
+                if(page_num<=1):
+                    continue
+                if(page_num>=7):
+                    break
+                text = clearASCII(page.get_text() or "")
+                text = clearThaiTypeing(text)
+                result += text      
+        result=clearNewline(result)
+        return {result}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"error: {str(e)}") 
+    
+@app.get("/tempReadPDFnoClear")
+def readddpdf(file_path: str = "คัมภีร์วิถีเซียน0001-0500.pdf"):
+    path = file_path.strip('"').strip("'") 
+    try:
+        result = ""
+        with fitz.open(path) as doc:
+            for page_num, page in enumerate(doc):
+                if(page_num<=1):
+                    continue
+                if(page_num>=7):
+                    break
+                text = clearASCII(page.get_text() or "")
+                text = clearThaiTypeing(text)
+                result += text      
+        return {result}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"error: {str(e)}") 
 
 # @app.post("/map-chapters/")
 # async def map_chapters(file: UploadFile = File(...), startChapter: int = Form(...), endChapter: int = Form(...)):
@@ -351,10 +398,10 @@ def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
 #                 if not raw_text or not raw_text.strip():
 #                     continue
                 
-#                 cleaned_text = cleanASCII(raw_text)               
-#                 # short_header = cleaned_text[:20].replace('\n', ' ')      
+#                 cleared_text = clearASCII(raw_text)               
+#                 # short_header = cleared_text[:20].replace('\n', ' ')      
 #                 # corrected_header = fix_header_with_ollama(short_header)
-#                 match = re.search(r'ตอนท ี่\s*(\d+)', cleaned_text)
+#                 match = re.search(r'ตอนท ี่\s*(\d+)'cleared_text)
                 
 #                 if match:
 #                     found_chap_num = int(match.group(1))
