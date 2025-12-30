@@ -38,6 +38,7 @@ app.add_middleware(
 )
 
 ollamaURL = "http://localhost:11434/api/generate"
+extractModel = "gemma2:9b" 
 transModel = "gemma2:9b"
 stabilityModel = "C:\stability matrix\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
 app.mount("/static", StaticFiles(directory="public"), name="static")
@@ -90,6 +91,34 @@ def clearNewline(text: str) -> str:
             return "\n"
         return " "
     return re.sub(r"(?: \n)+|\n", replacer, text)
+
+def process_embeddings(chapters_data, movie_id, movie_title):
+    ids = []
+    documents = []
+    metadatas = []
+    
+    for chap in chapters_data:
+        # Unique ID: movie_{id}_ep_{num}
+        cid = f"mov_{movie_id}_ep_{chap.episodeNumber}"
+        ids.append(cid)
+        documents.append(chap.chapterDetail)
+        metadatas.append({
+            "movie_id": movie_id,
+            "movie_title": movie_title,
+            "chapter_title": chap.chapterTitle,
+            "episode_number": chap.episodeNumber
+        })
+        
+    # Batch add to ChromaDB (Add ทีละ 100 เพื่อกัน Memory เต็มถ้าไฟล์ใหญ่มาก)
+    batch_size = 100
+    for i in range(0, len(documents), batch_size):
+        collection.add(
+            ids=ids[i:i+batch_size],
+            documents=documents[i:i+batch_size],
+            metadatas=metadatas[i:i+batch_size]
+        )
+    print(f"Finished embedding for movie {movie_id}")
+
 
 @app.get("/movies/", response_model=List[movieTitle])
 def get_movies(session: Session = Depends(get_session)):
@@ -378,6 +407,53 @@ def readddpdf(file_path: str = "คัมภีร์วิถีเซียน
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"error: {str(e)}") 
+
+@app.get("/extractEntities/{chapter_id}")
+async def extract_entities(chapter_id: int, session: Session = Depends(get_session)):
+    start = time.perf_counter()
+    chapter = session.get(chapterContent, chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    
+    if not chapter.chapterDetail:
+        return {"result": "No content found in this chapter."}
+
+    prompt = f"""
+    Analyze the text provided below and extract the following information. 
+    If possible, provide the output in English or Thai as appropriate.
+
+    1. Character Names (ชื่อตัวละคร)
+    2. Location Names (ชื่อสถานที่)
+    3. Special Items and their visual descriptions (สิ่งของพิเศษและรูปร่างหน้าตา)
+
+    Please format the output clearly (e.g., bullet points or JSON-like structure).
+
+    --- Text Start ---
+    {chapter.chapterDetail}
+    --- Text End ---
+    """
+
+    payload = {
+        "model": extractModel,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "num_ctx": 8192 # เพิ่ม Context Window เผื่อเนื้อหายาว
+        }
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            response = await client.post(ollamaURL, json=payload)
+            response.raise_for_status()
+            result = response.json().get("response", "")
+            
+            print(f"Extraction time: {time.perf_counter() - start:.3f} seconds")
+            return {"result": result}
+            
+    except Exception as e:
+        print(f"Error during extraction: {e}")
+        raise HTTPException(status_code=500, detail=f"AI Extraction Error: {e}")
 
 # @app.post("/map-chapters/")
 # async def map_chapters(file: UploadFile = File(...), startChapter: int = Form(...), endChapter: int = Form(...)):
