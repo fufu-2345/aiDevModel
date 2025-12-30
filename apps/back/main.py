@@ -92,34 +92,6 @@ def clearNewline(text: str) -> str:
         return " "
     return re.sub(r"(?: \n)+|\n", replacer, text)
 
-def process_embeddings(chapters_data, movie_id, movie_title):
-    ids = []
-    documents = []
-    metadatas = []
-    
-    for chap in chapters_data:
-        # Unique ID: movie_{id}_ep_{num}
-        cid = f"mov_{movie_id}_ep_{chap.episodeNumber}"
-        ids.append(cid)
-        documents.append(chap.chapterDetail)
-        metadatas.append({
-            "movie_id": movie_id,
-            "movie_title": movie_title,
-            "chapter_title": chap.chapterTitle,
-            "episode_number": chap.episodeNumber
-        })
-        
-    # Batch add to ChromaDB (Add ทีละ 100 เพื่อกัน Memory เต็มถ้าไฟล์ใหญ่มาก)
-    batch_size = 100
-    for i in range(0, len(documents), batch_size):
-        collection.add(
-            ids=ids[i:i+batch_size],
-            documents=documents[i:i+batch_size],
-            metadatas=metadatas[i:i+batch_size]
-        )
-    print(f"Finished embedding for movie {movie_id}")
-
-
 @app.get("/movies/", response_model=List[movieTitle])
 def get_movies(session: Session = Depends(get_session)):
     movies = session.exec(select(movieTitle)).all()
@@ -412,24 +384,64 @@ def readddpdf(file_path: str = "คัมภีร์วิถีเซียน
 async def extract_entities(chapter_id: int, session: Session = Depends(get_session)):
     start = time.perf_counter()
     chapter = session.get(chapterContent, chapter_id)
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
     
     if not chapter.chapterDetail:
         return {"result": "No content found in this chapter."}
 
+    text_to_process = chapter.chapterDetail 
+    english_text = text_to_process # Default เป็นข้อความเดิมถ้าแปลไม่ได้
+
+    if text_to_process and text_to_process.strip():
+        try:
+            # Chunking เพื่อป้องกัน error จาก googletrans ถ้าข้อความยาวเกิน
+            chunks = text_to_process.split("\n")
+            translated_chunks = []
+            temp_chunk = ""
+            
+            for line in chunks:
+                # Google Translate มักรับได้ประมาณ 5000 chars แต่อย่าเสี่ยง ใช้ 2000-3000 พอ
+                if len(temp_chunk) + len(line) < 2000: 
+                    temp_chunk += line + "\n"
+                else:
+                    if temp_chunk.strip():
+                        # แปล chunk นี้
+                        res = await translator.translate(temp_chunk, dest='en')
+                        translated_chunks.append(res.text)
+                    temp_chunk = line + "\n"
+            
+            # เก็บตก chunk สุดท้าย
+            if temp_chunk.strip():
+                res = await translator.translate(temp_chunk, dest='en')
+                translated_chunks.append(res.text)
+                
+            english_text = "\n".join(translated_chunks)
+            print(f"Translation completed in {time.perf_counter() - start:.3f} seconds")
+        except Exception as e:
+            print(f"Translation warning: {e}")
+            english_text = text_to_process
+    
+    print(len(english_text))
+    
     prompt = f"""
-    Analyze the text provided below and extract the following information. 
-    If possible, provide the output in English or Thai as appropriate.
+    Analyze the text provided below and extract information into a strict JSON format.
+    output in ENglish as appropriate.
 
-    1. Character Names (ชื่อตัวละคร)
-    2. Location Names (ชื่อสถานที่)
-    3. Special Items and their visual descriptions (สิ่งของพิเศษและรูปร่างหน้าตา)
+    1. Character Names
+    2. Location Names
+    3. Special Items and their visual descriptions
 
-    Please format the output clearly (e.g., bullet points or JSON-like structure).
+   
+    The JSON structure must be exactly as follows:
+    {{
+        "characters": ["name1", "name2"],
+        "locations": ["location1", "location2"],
+        "items": [
+            {{ "name": "item_name", "description": "visual description" }}
+        ]
+    }}
 
     --- Text Start ---
-    {chapter.chapterDetail}
+    {english_text}
     --- Text End ---
     """
 
@@ -438,18 +450,26 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
         "prompt": prompt,
         "stream": False,
         "options": {
-            "num_ctx": 8192 # เพิ่ม Context Window เผื่อเนื้อหายาว
+            "num_ctx": 8192, # เพิ่ม Context Window เผื่อเนื้อหายาว
+            "temperature": 0.1 # ลดความมั่ว ให้ตอบตามโครงสร้าง 
         }
     }
 
     try:
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(timeout=1800.0) as client:
             response = await client.post(ollamaURL, json=payload)
             response.raise_for_status()
-            result = response.json().get("response", "")
+            result_text = response.json().get("response", "")
             
             print(f"Extraction time: {time.perf_counter() - start:.3f} seconds")
-            return {"result": result}
+            
+            try:
+                cleaned_text = result_text.replace("```json", "").replace("```", "").strip()
+                json_data = json.loads(cleaned_text)
+                return json_data # ส่งกลับเป็น JSON จริงๆ
+            except json.JSONDecodeError:
+                print("Failed to parse JSON from AI response")
+                return {"error": "Failed to parse JSON", "raw_output": result_text}
             
     except Exception as e:
         print(f"Error during extraction: {e}")
