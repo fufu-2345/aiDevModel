@@ -38,7 +38,8 @@ app.add_middleware(
 )
 
 ollamaURL = "http://localhost:11434/api/generate"
-extractModel = "gemma2:9b" 
+extractModel = "gemma2:9b"
+# extractModel = "scb10x/typhoon2.1-gemma3-12b:latest" 
 transModel = "gemma2:9b"
 stabilityModel = "C:\stability matrix\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
 app.mount("/static", StaticFiles(directory="public"), name="static")
@@ -383,67 +384,69 @@ def readddpdf(file_path: str = "คัมภีร์วิถีเซียน
 @app.get("/extractEntities/{chapter_id}")
 async def extract_entities(chapter_id: int, session: Session = Depends(get_session)):
     start = time.perf_counter()
-    chapter = session.get(chapterContent, chapter_id)
+    chapterDetail = session.get(chapterContent, chapter_id).chapterDetail
+    # chunks = chapterDetail.split("\n")
+    # translate = ""
+    # if chapterDetail:
+    #     chunks = chapterDetail.split("\n")
+    #     temp = []
+    #     for chunk in chunks:
+    #         if chunk.strip():
+    #             try:
+    #                 result = await translator.translate(chunk, dest='en') 
+    #                 temp.append(result.text)
+    #             except Exception as e:
+    #                 return {"err": e}
+    #         else:
+    #             temp.append("")
+    #     translate = "\n".join(temp)
+    # else:
+    #     return {"result": "No content found in this chapter."}
     
-    if not chapter.chapterDetail:
-        return {"result": "No content found in this chapter."}
+    # print(f"translate time: {time.perf_counter() - start:.3f} seconds")
+    # return translate
+    # start=time.perf_counter()   
+    
+        # ช่วยสกัดชื่อคน ชื่อสถานที่ และชื่อสิ่งของให้หน่อยโดยที่ชื่อคนถ้ามีชื่อรองหรือฉายาให้เอามาใส่ใน altName
+    
+    # {{
+    #     "characters": [
+    #         {{
+    #             "name": "ชื่อตัวละคร",
+    #             "altName": ["ฉายา", "ชื่ออื่นๆ"]
+    #         }}
+    #     ],
+    #     "locations": ["สถานที่ 1", "สถานที่ 2"],
+    #     "items": [
+    #         {{ "name": "ชื่อสิ่งของ", "description": "คำอธิบายสั้นๆ" }}
+    #     ]
+    # }}
 
-    text_to_process = chapter.chapterDetail 
-    english_text = text_to_process # Default เป็นข้อความเดิมถ้าแปลไม่ได้
-
-    if text_to_process and text_to_process.strip():
-        try:
-            # Chunking เพื่อป้องกัน error จาก googletrans ถ้าข้อความยาวเกิน
-            chunks = text_to_process.split("\n")
-            translated_chunks = []
-            temp_chunk = ""
-            
-            for line in chunks:
-                # Google Translate มักรับได้ประมาณ 5000 chars แต่อย่าเสี่ยง ใช้ 2000-3000 พอ
-                if len(temp_chunk) + len(line) < 2000: 
-                    temp_chunk += line + "\n"
-                else:
-                    if temp_chunk.strip():
-                        # แปล chunk นี้
-                        res = await translator.translate(temp_chunk, dest='en')
-                        translated_chunks.append(res.text)
-                    temp_chunk = line + "\n"
-            
-            # เก็บตก chunk สุดท้าย
-            if temp_chunk.strip():
-                res = await translator.translate(temp_chunk, dest='en')
-                translated_chunks.append(res.text)
-                
-            english_text = "\n".join(translated_chunks)
-            print(f"Translation completed in {time.perf_counter() - start:.3f} seconds")
-        except Exception as e:
-            print(f"Translation warning: {e}")
-            english_text = text_to_process
-    
-    print(len(english_text))
-    
+    # --- เริ่มต้นเนื้อหา ---
+    # 
+    # --- จบเนื้อหา ---
     prompt = f"""
-    Analyze the text provided below and extract information into a strict JSON format.
-    output in ENglish as appropriate.
+    Please extract characters, locations, and items from the text below. For characters, if they have an alias or nickname, include it in the "altName" field.
 
-    1. Character Names
-    2. Location Names
-    3. Special Items and their visual descriptions
+    Return the output in the following JSON format:
 
-   
-    The JSON structure must be exactly as follows:
     {{
-        "characters": ["name1", "name2"],
-        "locations": ["location1", "location2"],
+        "characters": [
+            {{
+                "name": "Character Name",
+                "altName": ["Nickname", "Alias"]
+            }}
+        ],
+        "locations": ["Location 1", "Location 2"],
         "items": [
-            {{ "name": "item_name", "description": "visual description" }}
+            {{ "name": "Item Name", "description": "Short description" }}
         ]
     }}
 
-    --- Text Start ---
-    {english_text}
-    --- Text End ---
-    """
+    --- Content Start ---
+    {chapterDetail}
+    --- Content End ---
+        """
 
     payload = {
         "model": extractModel,
@@ -452,97 +455,37 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
         "options": {
             "num_ctx": 8192, # เพิ่ม Context Window เผื่อเนื้อหายาว
             "temperature": 0.1 # ลดความมั่ว ให้ตอบตามโครงสร้าง 
-        }
+        },
+        "format": "json"
     }
-
+    
     try:
         async with httpx.AsyncClient(timeout=1800.0) as client:
             response = await client.post(ollamaURL, json=payload)
             response.raise_for_status()
             result_text = response.json().get("response", "")
             
-            print(f"Extraction time: {time.perf_counter() - start:.3f} seconds")
-            
             try:
                 cleaned_text = result_text.replace("```json", "").replace("```", "").strip()
                 json_data = json.loads(cleaned_text)
-                return json_data # ส่งกลับเป็น JSON จริงๆ
+                
+                alias_map = {}
+                
+                if "characters" in json_data:
+                    for char in json_data["characters"]:
+                        main_name = char.get("canonical_name")
+                        if main_name:
+                            alias_map[main_name] = main_name
+                            for alias in char.get("aliases", []):
+                                alias_map[alias] = main_name
+                json_data["rag_lookup_map"] = alias_map
+                print(f"Extraction time: {time.perf_counter() - start:.3f} seconds")
+                return json_data
             except json.JSONDecodeError:
-                print("Failed to parse JSON from AI response")
                 return {"error": "Failed to parse JSON", "raw_output": result_text}
-            
     except Exception as e:
         print(f"Error during extraction: {e}")
         raise HTTPException(status_code=500, detail=f"AI Extraction Error: {e}")
-
-# @app.post("/map-chapters/")
-# async def map_chapters(file: UploadFile = File(...), startChapter: int = Form(...), endChapter: int = Form(...)):
-#     # start_time = time.perf_counter()
-#     if not file.filename.endswith(".pdf"):
-#         raise HTTPException(status_code=400, detail="This is not a PDF file")
-#     file_content = await file.read()
-#     found_chapters = [] 
-#     currentChapter = None
-#     currentStart = None
-#     try:
-#         with pdfplumber.open(io.BytesIO(file_content)) as pdf:
-#             width = pdf.pages[0].width
-#             height = pdf.pages[0].height # *0.1
-#             for i, page in enumerate(pdf.pages):
-#                 raw_text = page.extract_text()
-#                 # raw_text = page.crop((0, 0, width, height)).extract_text()
-#                 if not raw_text or not raw_text.strip():
-#                     continue
-                
-#                 cleared_text = clearASCII(raw_text)               
-#                 # short_header = cleared_text[:20].replace('\n', ' ')      
-#                 # corrected_header = fix_header_with_ollama(short_header)
-#                 match = re.search(r'ตอนท ี่\s*(\d+)'cleared_text)
-                
-#                 if match:
-#                     found_chap_num = int(match.group(1))
-#                     # ถ้ามีตอนเก่าค้างอยู่ (เช่นเจอตอน 2 แล้วกำลังจะเริ่มตอน 2) -> ให้บันทึกตอนที่ 1
-#                     if currentChapter is not None:
-#                         found_chapters.append({
-#                             "chapter": currentChapter,
-#                             "start_page": currentStart,
-#                             "end_page": i
-#                         })
-#                         # [จุดแก้ไขสำคัญ]: เช็คว่าตอนที่เพิ่งบันทึกจบไป ใช่ตอนสุดท้ายที่ต้องการไหม?
-#                         if currentChapter >= endChapter:
-#                             print(f"DEBUG: Found end of requested chapter {endChapter}. Stopping scan.", flush=True)
-#                             currentChapter = None # Reset เพื่อไม่ให้ไปบันทึกซ้ำด้านล่าง
-#                             break      
-#                     # เริ่มต้น track ตอนใหม่ที่เพิ่งเจอ
-#                     currentChapter = found_chap_num
-#                     currentStart = i+1                
-#                     # หา 500 เจอ 501
-#                     if found_chap_num > endChapter:
-#                         currentChapter = None
-#                         break
-#             # จัดการกรณีวนลูปจบเล่ม หรือ Break ออกมาแล้วยังมีตอนค้างอยู่ (กรณีตอนสุดท้ายของไฟล์)
-#             if currentChapter is not None:
-#                 # ตรวจสอบอีกครั้งว่าตอนที่ค้างอยู่ อยู่ใน range ที่ต้องการไหม
-#                 if currentChapter <= endChapter:
-#                     found_chapters.append({
-#                         "chapter": currentChapter,
-#                         "start_page": currentStart,
-#                         "end_page": len(pdf.pages) 
-#                     })
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Processing Error: {e}")
-#     # Filter ผลลัพธ์ (เผื่อมีหลุดมา)
-#     filtered_result = [
-#         c for c in found_chapters 
-#         if startChapter <= c['chapter'] <= endChapter
-#     ]
-#     if not filtered_result and found_chapters:
-#         print("Warning: Chapters found but not in the requested range.")
-#     # duration = time.perf_counter() - start_time
-#     # print(f"Mapping finished in {duration:.3f} seconds")
-#     return {
-#         "chapters": filtered_result
-#     }
     
 @app.get("/")
 def root():

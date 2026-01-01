@@ -95,6 +95,23 @@ export default function ChapterReaderPage({
     fetchChapter();
   }, [chapterId]);
 
+  const extract = async () => {
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/extract/${chapterId}`,
+        {
+          method: "GET",
+        }
+      );
+      if (response.ok) {
+        return;
+      }
+    } catch (error) {
+      console.error("Error:", error);
+      toast.error("An error occurred while starting image generation.");
+    }
+  };
+
   const extractGen = async () => {
     try {
       const response = await fetch(
@@ -238,6 +255,18 @@ export default function ChapterReaderPage({
             )}
           </div>
         </div>
+        <div>
+          <div
+            onClick={() => {
+              console.log("extract+gen");
+              extract();
+            }}
+            className="cursor-pointer"
+          >
+            extract+gen
+          </div>
+        </div>
+        <br />
         <div>
           <div
             onClick={() => {
