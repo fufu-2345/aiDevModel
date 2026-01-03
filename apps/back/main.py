@@ -38,8 +38,8 @@ app.add_middleware(
 )
 
 ollamaURL = "http://localhost:11434/api/generate"
-extractModel = "gemma2:9b"
-# extractModel = "scb10x/typhoon2.1-gemma3-12b:latest" 
+# extractModel = "gemma2:9b"
+extractModel = "scb10x/typhoon2.1-gemma3-12b:latest" 
 transModel = "gemma2:9b"
 stabilityModel = "C:\stability matrix\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
 app.mount("/static", StaticFiles(directory="public"), name="static")
@@ -486,6 +486,59 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
     except Exception as e:
         print(f"Error during extraction: {e}")
         raise HTTPException(status_code=500, detail=f"AI Extraction Error: {e}")
+    
+@app.post("/movies/{movie_id}/process-rag")
+async def trigger_rag_process(
+    movie_id: int, 
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session)
+):
+    """
+    สั่งให้ระบบดึงข้อมูล Chapter ที่มีอยู่แล้ว มาทำ Index และ Visual Extraction
+    """
+    # เช็คว่ามีหนังจริงไหม
+    movie = session.query(movieTitle).filter(movieTitle.id == movie_id).first()
+    if not movie:
+        raise HTTPException(status_code=404, detail="Movie not found")
+        
+    # ส่งเข้า Background Task (จะได้ไม่รอ response นาน)
+    background_tasks.add_task(process_movie_data, movie_id)
+    
+    return {"status": "started", "message": f"Started processing RAG for movie {movie_id}"}
+
+
+@app.post("/gen-image-prompt")
+async def get_scene_prompt(
+    movie_id: int, 
+    scene_query: str, # เช่น "หานลี่นั่งมองท้องฟ้า"
+    session: Session = Depends(get_session)
+):
+    """
+    API สำหรับดึง Prompt ไปใส่ Stability Matrix
+    """
+    # 1. ค้นหา Character ใน Entity DB
+    # (แบบง่าย) ค้นหาจากชื่อใน query
+    entities = session.query(EntityContent).filter(EntityContent.movie_id == movie_id).all()
+    found_chars = [e for e in entities if e.name in scene_query]
+    
+    # 2. สร้าง Prompt
+    prompt_parts = ["masterpiece, best quality, 8k"]
+    
+    # ใส่ Visual Tags ของตัวละครที่เจอ
+    for char in found_chars:
+        if char.visual_tags:
+            prompt_parts.append(f"({char.name}:1.2), {char.visual_tags}")
+        else:
+            # Fallback ถ้าไม่มีข้อมูล
+            prompt_parts.append(f"{char.name}, ancient chinese clothes")
+            
+    # แปลง Scene Query เป็น Eng (ใช้ AI ช่วยแปลจะดีสุด แต่ตรงนี้ Mockup)
+    prompt_parts.append(f"action: {scene_query}") 
+    
+    return {
+        "sd_positive_prompt": ", ".join(prompt_parts),
+        "sd_negative_prompt": "lowres, bad anatomy, bad hands, text, error"
+    }
     
 @app.get("/")
 def root():

@@ -7,13 +7,12 @@ export default function Page() {
     <div>
       <p>Main</p>
 
-      <br /><br />
-      <Link href="/extract">Go to extract</Link>
-
-      <br /><br />
+      <br />
+      <br />
       <Link href="/testTTS">Go to testTTS</Link>
 
-      <br /><br />
+      <br />
+      <br />
       <Link href="/archive">Go to archive</Link>
     </div>
   );
