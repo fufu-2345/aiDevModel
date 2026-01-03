@@ -1,10 +1,11 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlmodel import Session, select
 from pydantic import BaseModel
 from typing import List
 import requests
+from fastapi.staticfiles import StaticFiles
 import json
 import io
 import os
@@ -13,13 +14,13 @@ import re
 import fitz 
 import httpx
 from googletrans import Translator
-
 import torch
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
-from fastapi.staticfiles import StaticFiles
 
 from database import create_db_and_tables, get_session
-from models import movieTitle, chapterContent
+from models import movieTitle, chapterContent, EntityContent
+import rag
+import backprocess
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -488,57 +489,53 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
         raise HTTPException(status_code=500, detail=f"AI Extraction Error: {e}")
     
 @app.post("/movies/{movie_id}/process-rag")
-async def trigger_rag_process(
+async def trigger_rag(
     movie_id: int, 
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session)
 ):
-    """
-    สั่งให้ระบบดึงข้อมูล Chapter ที่มีอยู่แล้ว มาทำ Index และ Visual Extraction
-    """
-    # เช็คว่ามีหนังจริงไหม
-    movie = session.query(movieTitle).filter(movieTitle.id == movie_id).first()
+    movie = session.get(movieTitle, movie_id)
     if not movie:
         raise HTTPException(status_code=404, detail="Movie not found")
-        
-    # ส่งเข้า Background Task (จะได้ไม่รอ response นาน)
-    background_tasks.add_task(process_movie_data, movie_id)
     
-    return {"status": "started", "message": f"Started processing RAG for movie {movie_id}"}
-
+    # ส่งงานไปให้ backprocess ทำ
+    movie.status = "processing"
+    session.add(movie)
+    session.commit()
+    
+    background_tasks.add_task(backprocess.process_movie_background, movie_id)
+    
+    return {"status": "started", "message": "Wobackprocessrker is processing in background"}
 
 @app.post("/gen-image-prompt")
 async def get_scene_prompt(
     movie_id: int, 
-    scene_query: str, # เช่น "หานลี่นั่งมองท้องฟ้า"
+    scene_query: str,
     session: Session = Depends(get_session)
 ):
-    """
-    API สำหรับดึง Prompt ไปใส่ Stability Matrix
-    """
-    # 1. ค้นหา Character ใน Entity DB
-    # (แบบง่าย) ค้นหาจากชื่อใน query
-    entities = session.query(EntityContent).filter(EntityContent.movie_id == movie_id).all()
+    # Logic การค้นหา Visual Tags
+    entities = session.exec(
+        select(EntityContent).where(EntityContent.movie_id == movie_id)
+    ).all()
+    
     found_chars = [e for e in entities if e.name in scene_query]
     
-    # 2. สร้าง Prompt
     prompt_parts = ["masterpiece, best quality, 8k"]
-    
-    # ใส่ Visual Tags ของตัวละครที่เจอ
     for char in found_chars:
-        if char.visual_tags:
-            prompt_parts.append(f"({char.name}:1.2), {char.visual_tags}")
-        else:
-            # Fallback ถ้าไม่มีข้อมูล
-            prompt_parts.append(f"{char.name}, ancient chinese clothes")
+        visual = char.visual_tags if char.visual_tags else f"{char.name}, ancient chinese clothes"
+        prompt_parts.append(f"({char.name}:1.2), {visual}")
             
-    # แปลง Scene Query เป็น Eng (ใช้ AI ช่วยแปลจะดีสุด แต่ตรงนี้ Mockup)
     prompt_parts.append(f"action: {scene_query}") 
     
-    return {
-        "sd_positive_prompt": ", ".join(prompt_parts),
-        "sd_negative_prompt": "lowres, bad anatomy, bad hands, text, error"
-    }
+    return {"sd_prompt": ", ".join(prompt_parts)}
+
+# Endpoint ดึง Chapter
+@app.get("/chapters/{chapter_id}", response_model=chapterContent)
+def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
+    chapter = session.get(chapterContent, chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    return chapter
     
 @app.get("/")
 def root():

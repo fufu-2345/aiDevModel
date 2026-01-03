@@ -10,10 +10,12 @@ export default function Page() {
       <br />
       <br />
       <Link href="/testTTS">Go to testTTS</Link>
-
       <br />
       <br />
       <Link href="/archive">Go to archive</Link>
+      <br />
+      <br />
+      <Link href="/testRag">Go to testRag</Link>
     </div>
   );
 }
