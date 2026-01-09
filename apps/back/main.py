@@ -16,6 +16,7 @@ import httpx
 from googletrans import Translator
 import torch
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
+from pythainlp.tag import NER
 
 from database import create_db_and_tables, get_session
 from models import movieTitle, chapterContent, EntityContent
@@ -41,6 +42,7 @@ app.add_middleware(
 ollamaURL = "http://localhost:11434/api/generate"
 # extractModel = "gemma2:9b"
 extractModel = "scb10x/typhoon2.1-gemma3-12b:latest" 
+# extractModel = "gemma2:9b"
 transModel = "gemma2:9b"
 stabilityModel = "C:\stability matrix\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
 app.mount("/static", StaticFiles(directory="public"), name="static")
@@ -336,6 +338,7 @@ def update_chapter(chapter_id: int, chapter_data: ChapterUpdate, session: Sessio
     session.refresh(chapter)
     return chapter
 
+# ข้อมูลทีละ chapter
 @app.get("/chapters/{chapter_id}", response_model=chapterContent)
 def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
     chapter = session.get(chapterContent, chapter_id)
@@ -382,112 +385,339 @@ def readddpdf(file_path: str = "คัมภีร์วิถีเซียน
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"error: {str(e)}") 
 
+# @app.get("/extractEntities/{chapter_id}")
+# async def extract_entities(chapter_id: int, session: Session = Depends(get_session)):
+#     start = time.perf_counter()
+#     chapterDetail = session.get(chapterContent, chapter_id).chapterDetail
+#     # chunks = chapterDetail.split("\n")
+#     # translate = ""
+#     # if chapterDetail:
+#     #     chunks = chapterDetail.split("\n")
+#     #     temp = []
+#     #     for chunk in chunks:
+#     #         if chunk.strip():
+#     #             try:
+#     #                 result = await translator.translate(chunk, dest='en') 
+#     #                 temp.append(result.text)
+#     #             except Exception as e:
+#     #                 return {"err": e}
+#     #         else:
+#     #             temp.append("")
+#     #     translate = "\n".join(temp)
+#     # else:
+#     #     return {"result": "No content found in this chapter."}
+    
+#     # print(f"translate time: {time.perf_counter() - start:.3f} seconds")
+#     # return translate
+#     # start=time.perf_counter()   
+    
+#         # ช่วยสกัดชื่อคน ชื่อสถานที่ และชื่อสิ่งของให้หน่อยโดยที่ชื่อคนถ้ามีชื่อรองหรือฉายาให้เอามาใส่ใน altName
+    
+#     # {{
+#     #     "characters": [
+#     #         {{
+#     #             "name": "ชื่อตัวละคร",
+#     #             "altName": ["ฉายา", "ชื่ออื่นๆ"]
+#     #         }}
+#     #     ],
+#     #     "locations": ["สถานที่ 1", "สถานที่ 2"],
+#     #     "items": [
+#     #         {{ "name": "ชื่อสิ่งของ", "description": "คำอธิบายสั้นๆ" }}
+#     #     ]
+#     # }}
+
+#     # --- เริ่มต้นเนื้อหา ---
+#     # 
+#     # --- จบเนื้อหา ---
+#     prompt = f"""
+#     Please extract characters, locations, and items from the text below. For characters, if they have an alias or nickname, include it in the "altName" field.
+
+#     Return the output in the following JSON format:
+
+#     {{
+#         "characters": [
+#             {{
+#                 "name": "Character Name",
+#                 "altName": ["Nickname", "Alias"]
+#             }}
+#         ],
+#         "locations": ["Location 1", "Location 2"],
+#         "items": [
+#             {{ "name": "Item Name", "description": "Short description" }}
+#         ]
+#     }}
+
+#     --- Content Start ---
+#     {chapterDetail}
+#     --- Content End ---
+#         """
+
+#     payload = {
+#         "model": extractModel,
+#         "prompt": prompt,
+#         "stream": False,
+#         "options": {
+#             "num_ctx": 8192, # เพิ่ม Context Window เผื่อเนื้อหายาว
+#             "temperature": 0.1 # ลดความมั่ว ให้ตอบตามโครงสร้าง 
+#         },
+#         "format": "json"
+#     }
+    
+#     try:
+#         async with httpx.AsyncClient(timeout=1800.0) as client:
+#             response = await client.post(ollamaURL, json=payload)
+#             response.raise_for_status()
+#             result_text = response.json().get("response", "")
+            
+#             try:
+#                 cleaned_text = result_text.replace("```json", "").replace("```", "").strip()
+#                 json_data = json.loads(cleaned_text)
+                
+#                 alias_map = {}
+                
+#                 if "characters" in json_data:
+#                     for char in json_data["characters"]:
+#                         main_name = char.get("canonical_name")
+#                         if main_name:
+#                             alias_map[main_name] = main_name
+#                             for alias in char.get("aliases", []):
+#                                 alias_map[alias] = main_name
+#                 json_data["rag_lookup_map"] = alias_map
+#                 print(f"Extraction time: {time.perf_counter() - start:.3f} seconds")
+#                 return json_data
+#             except json.JSONDecodeError:
+#                 return {"error": "Failed to parse JSON", "raw_output": result_text}
+#     except Exception as e:
+#         print(f"Error during extraction: {e}")
+#         raise HTTPException(status_code=500, detail=f"AI Extraction Error: {e}")
+
 @app.get("/extractEntities/{chapter_id}")
-async def extract_entities(chapter_id: int, session: Session = Depends(get_session)):
+async def extractEntities(chapter_id: int, session: Session = Depends(get_session)):
     start = time.perf_counter()
-    chapterDetail = session.get(chapterContent, chapter_id).chapterDetail
-    # chunks = chapterDetail.split("\n")
-    # translate = ""
-    # if chapterDetail:
-    #     chunks = chapterDetail.split("\n")
-    #     temp = []
-    #     for chunk in chunks:
-    #         if chunk.strip():
-    #             try:
-    #                 result = await translator.translate(chunk, dest='en') 
-    #                 temp.append(result.text)
-    #             except Exception as e:
-    #                 return {"err": e}
-    #         else:
-    #             temp.append("")
-    #     translate = "\n".join(temp)
-    # else:
-    #     return {"result": "No content found in this chapter."}
-    
-    # print(f"translate time: {time.perf_counter() - start:.3f} seconds")
-    # return translate
-    # start=time.perf_counter()   
-    
-        # ช่วยสกัดชื่อคน ชื่อสถานที่ และชื่อสิ่งของให้หน่อยโดยที่ชื่อคนถ้ามีชื่อรองหรือฉายาให้เอามาใส่ใน altName
-    
-    # {{
-    #     "characters": [
-    #         {{
-    #             "name": "ชื่อตัวละคร",
-    #             "altName": ["ฉายา", "ชื่ออื่นๆ"]
-    #         }}
-    #     ],
-    #     "locations": ["สถานที่ 1", "สถานที่ 2"],
-    #     "items": [
-    #         {{ "name": "ชื่อสิ่งของ", "description": "คำอธิบายสั้นๆ" }}
-    #     ]
-    # }}
+    chapter = session.get(chapterContent, chapter_id)
 
-    # --- เริ่มต้นเนื้อหา ---
-    # 
-    # --- จบเนื้อหา ---
+    try:
+        ner = NER("thainer")
+        tags = ner.tag(chapter.chapterDetail)
+        
+        characters = set()
+        locations = set()
+        
+        current_entity = []
+        current_type = None
+
+        for word, tag in tags:
+            # B-PERSON, B-LOCATION, B-ORGANIZATION
+            if tag.startswith("B-"):
+                if current_entity: # บันทึกตัวก่อนหน้า
+                    full_word = "".join(current_entity)
+                    if "PERSON" in current_type: characters.add(full_word)
+                    elif "LOCATION" in current_type: locations.add(full_word)
+                
+                current_entity = [word]
+                current_type = tag[2:] # ตัด B- ออก
+                
+            # I-PERSON, I-LOCATION (คำต่อเนื่อง)
+            elif tag.startswith("I-") and current_type and tag[2:] == current_type:
+                current_entity.append(word)
+            
+            else: # O หรือ Tag อื่นๆ
+                if current_entity: # จบ Entity เดิม บันทึกลง set
+                    full_word = "".join(current_entity)
+                    if "PERSON" in current_type: characters.add(full_word)
+                    elif "LOCATION" in current_type: locations.add(full_word)
+                current_entity = []
+                current_type = None
+        
+        # เก็บตกตัวสุดท้ายถ้ามีค้างอยู่
+        if current_entity:
+            full_word = "".join(current_entity)
+            if "PERSON" in current_type: characters.add(full_word)
+            elif "LOCATION" in current_type: locations.add(full_word)
+
+        print(f"PyThaiNLP Extraction time: {time.perf_counter() - start:.3f} seconds")
+        
+        # ส่งกลับเลยโดยไม่ต้องกรองคำสั้น
+        return {
+            "characters": list(characters),
+            "locations": list(locations),
+            "items": []
+        }
+
+    except Exception as e:
+        print(f"PyThaiNLP Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Extraction Error: {e}")
+
+    except Exception as e:
+        print(f"PyThaiNLP Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Extraction Error: {e}")
+
+async def process_chunk2(chunk_text: str, client: httpx.AsyncClient, extractModel: str):
     prompt = f"""
-    Please extract characters, locations, and items from the text below. For characters, if they have an alias or nickname, include it in the "altName" field.
+    Role
+    คุณคือ AI Assistant ผู้เชี่ยวชาญด้านการสกัดข้อมูลภาพ (Visual Extraction) สำหรับงาน Generative AI
 
-    Return the output in the following JSON format:
+    Task
+    อ่านข้อความที่ได้รับ แล้วสกัด Entity 3 ประเภท:
+    1. Character (ตัวละคร)
+    2. Location (สถานที่)
+    3. Item (วัตถุสำคัญ)
 
+    Requirements:
+    - Name: ระบุชื่อหลัก (Main Name) ที่เป็นทางการที่สุด
+    - Alt Names: ระบุชื่อเล่น ฉายา หรือชื่อเรียกอื่น (ถ้ามี) ใส่ใน List
+    - Visual Tags: คำศัพท์สำคัญเกี่ยวกับรูปลักษณ์ (ภาษาไทย) คั่นด้วยเครื่องหมายคอมมา
+
+    Output Format (JSON Only):
     {{
-        "characters": [
+        "entities": [
             {{
-                "name": "Character Name",
-                "altName": ["Nickname", "Alias"]
+                "type": "Character", 
+                "name": "ชื่อหลัก",
+                "altNames": ["ชื่อรอง1", "ชื่อรอง2"],
+                "VisualTags": "tag1, tag2, tag3"
+            }},
+            {{
+                "type": "Location",
+                "name": "ชื่อสถานที่",
+                "altNames": [],
+                "VisualTags": "tag1, tag2"
             }}
-        ],
-        "locations": ["Location 1", "Location 2"],
-        "items": [
-            {{ "name": "Item Name", "description": "Short description" }}
         ]
     }}
 
-    --- Content Start ---
-    {chapterDetail}
-    --- Content End ---
-        """
+    Input Text:
+    {chunk_text}
+    """
 
     payload = {
         "model": extractModel,
         "prompt": prompt,
         "stream": False,
         "options": {
-            "num_ctx": 8192, # เพิ่ม Context Window เผื่อเนื้อหายาว
-            "temperature": 0.1 # ลดความมั่ว ให้ตอบตามโครงสร้าง 
+            "num_ctx": 4096, 
+            "temperature": 0.5
         },
         "format": "json"
     }
-    
+
     try:
-        async with httpx.AsyncClient(timeout=1800.0) as client:
-            response = await client.post(ollamaURL, json=payload)
-            response.raise_for_status()
-            result_text = response.json().get("response", "")
-            
-            try:
-                cleaned_text = result_text.replace("```json", "").replace("```", "").strip()
-                json_data = json.loads(cleaned_text)
-                
-                alias_map = {}
-                
-                if "characters" in json_data:
-                    for char in json_data["characters"]:
-                        main_name = char.get("canonical_name")
-                        if main_name:
-                            alias_map[main_name] = main_name
-                            for alias in char.get("aliases", []):
-                                alias_map[alias] = main_name
-                json_data["rag_lookup_map"] = alias_map
-                print(f"Extraction time: {time.perf_counter() - start:.3f} seconds")
-                return json_data
-            except json.JSONDecodeError:
-                return {"error": "Failed to parse JSON", "raw_output": result_text}
+        response = await client.post(ollamaURL, json=payload)
+        response.raise_for_status()
+        result_text = response.json().get("response", "")
+        
+        cleaned_text = result_text.replace("```json", "").replace("```", "").strip()
+        return json.loads(cleaned_text)
     except Exception as e:
-        print(f"Error during extraction: {e}")
-        raise HTTPException(status_code=500, detail=f"AI Extraction Error: {e}")
+        return None
+
+@app.get("/extractEntities2/{chapter_id}")
+async def extract_entities2(chapter_id: int, session: Session = Depends(get_session)):
+    start = time.perf_counter()
     
+    chapter_obj = session.get(chapterContent, chapter_id)
+    if not chapter_obj or not chapter_obj.chapterDetail:
+        return {"result": "No content found in this chapter."}  
+    
+    chapterDetail = chapter_obj.chapterDetail
+    lines = chapterDetail.split('\n')
+    total_lines = len(lines)
+    
+    if total_lines < 10:
+        chunks = [chapterDetail]
+    else:
+        chunk_size = (total_lines + 9) // 10
+        chunks = []
+        for i in range(0, total_lines, chunk_size):
+            chunk_text = "\n".join(lines[i:i + chunk_size])
+            chunks.append(chunk_text)
+            
+    print(f"{len(chunks)} chunks")
+    results = []
+    
+    async with httpx.AsyncClient(timeout=1800.0) as client:
+        for idx, chunk in enumerate(chunks):
+            print(idx)
+            res = await process_chunk2(chunk, client, extractModel)
+            results.append(res)
+
+    merged_entities = {}
+    for res in results:
+        if not res or not res.get("entities"):
+            continue
+        
+        for entity in res["entities"]:
+            e_type = entity.get("type")
+            name = entity.get("name")
+            
+            # Data validation
+            if not e_type or not name:
+                continue
+                
+            # Normalize keys to handle case sensitivity issues
+            e_type = e_type.strip().capitalize() # Ensure Character/Location/Item formatting
+            name = name.strip()
+            key = (e_type, name)
+            
+            current_tags_str = entity.get("VisualTags", "")
+            if isinstance(current_tags_str, list): 
+                current_tags = set(t.strip() for t in current_tags_str if t.strip())
+            else:
+                current_tags = set(t.strip() for t in current_tags_str.split(",") if t.strip())
+
+            # จัดการ Alt Names
+            current_alts = set(entity.get("altNames", []))
+
+            if key not in merged_entities:
+                merged_entities[key] = {
+                    "type": e_type,
+                    "name": name,
+                    "altNames": current_alts, 
+                    "VisualTags": current_tags
+                }
+            else:
+                # Merge Tags
+                merged_entities[key]["VisualTags"].update(current_tags)
+                
+                # Merge Alt Names
+                merged_entities[key]["altNames"].update(current_alts)
+                
+                # Update Description (Keep the longest one usually contains more detail)
+                # old_desc = merged_entities[key]["thai_description"]
+                # new_desc = entity.get("thai_description", "")
+                # if len(new_desc) > len(old_desc):
+                #     merged_entities[key]["thai_description"] = new_desc
+
+    # --- Final Formatting (Updated: Grouping by Category) ---
+    final_output = {
+        "characters": [],
+        "locations": [],
+        "items": []
+    }
+
+    for key, data in merged_entities.items():
+        # Convert Sets back to Lists/Strings for JSON output
+        data["VisualTags"] = ", ".join(sorted(list(data["VisualTags"])))
+        data["altNames"] = sorted(list(data["altNames"]))
+        
+        # Categorize output
+        e_type_lower = data["type"].lower()
+        
+        if "character" in e_type_lower:
+            final_output["characters"].append(data)
+        elif "location" in e_type_lower:
+            final_output["locations"].append(data)
+        elif "item" in e_type_lower:
+            final_output["items"].append(data)
+        else:
+            # กรณี AI ส่ง Type แปลกๆ มา ให้ใส่ items เป็นค่า Default หรือสร้างหมวด others
+            final_output["items"].append(data)
+
+    print(f"Total Visual Extraction time: {time.perf_counter() - start:.3f} seconds")
+    return final_output
+
+# -----------------------------------------------------------------
+
 @app.post("/movies/{movie_id}/process-rag")
 async def trigger_rag(
     movie_id: int, 
@@ -507,35 +737,67 @@ async def trigger_rag(
     
     return {"status": "started", "message": "Wobackprocessrker is processing in background"}
 
-@app.post("/gen-image-prompt")
-async def get_scene_prompt(
-    movie_id: int, 
-    scene_query: str,
-    session: Session = Depends(get_session)
-):
-    # Logic การค้นหา Visual Tags
-    entities = session.exec(
-        select(EntityContent).where(EntityContent.movie_id == movie_id)
-    ).all()
-    
-    found_chars = [e for e in entities if e.name in scene_query]
-    
-    prompt_parts = ["masterpiece, best quality, 8k"]
-    for char in found_chars:
-        visual = char.visual_tags if char.visual_tags else f"{char.name}, ancient chinese clothes"
-        prompt_parts.append(f"({char.name}:1.2), {visual}")
-            
-    prompt_parts.append(f"action: {scene_query}") 
-    
-    return {"sd_prompt": ", ".join(prompt_parts)}
+import base64
+import uuid
+from datetime import datetime
+SD_API_URL = "http://127.0.0.1:7860/sdapi/v1/txt2img"
 
-# Endpoint ดึง Chapter
-@app.get("/chapters/{chapter_id}", response_model=chapterContent)
-def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
-    chapter = session.get(chapterContent, chapter_id)
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-    return chapter
+SD_MODEL_CHECKPOINT = "juggernautXL_ragnarokBy.safetensors"
+
+STORAGE_DIR = "storage/thumbnail"
+os.makedirs(STORAGE_DIR, exist_ok=True)
+
+def generate_image_internal(prompt: str, output_filename: str):
+    start = time.perf_counter()
+    
+    payload = {
+        "prompt": prompt,
+        "negative_prompt": "blurry, low quality, distorted, text, watermark, bad anatomy, bad hands, lowres, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, username",
+        "steps": 25,                # จำนวนรอบ (20-30 กำลังดี)
+        "sampler_name": "Euler a",  # Sampler มาตรฐาน เร็วและสวย
+        "width": 1024,              # [Updated] ปรับเป็น 1024 เพราะ JuggernautXL เป็น SDXL
+        "height": 1024,
+        "cfg_scale": 7,             # ความเชื่อฟัง Prompt (7 คือค่ามาตรฐาน)
+        "batch_size": 1,
+        
+        # [NEW] บังคับให้ WebUI สลับไปใช้ Model นี้
+        "override_settings": {
+            "sd_model_checkpoint": SD_MODEL_CHECKPOINT
+        },
+        "override_settings_restore_afterwards": False # True=ใช้เสร็จกลับเป็นตัวเดิม, False=เปลี่ยนแล้วเปลี่ยนเลย
+    }
+
+    try:
+        # 1. ยิง API Request
+        response = requests.post(SD_API_URL, json=payload, timeout=120) # timeout เผื่อเครื่องช้า
+        
+        if response.status_code == 200:
+            r = response.json()
+            
+            # API จะส่งรูปกลับมาเป็น Base64 String ใน r['images'][0]
+            image_b64 = r['images'][0]
+            
+            # 2. แปลง Base64 กลับเป็นไฟล์รูปภาพ
+            save_path = os.path.join(STORAGE_DIR, output_filename)
+            
+            with open(save_path, "wb") as f:
+                f.write(base64.b64decode(image_b64))
+            
+            duration = time.perf_counter() - start
+            print(f"✅ Generated & Saved to {save_path} in {duration:.2f}s")
+            return save_path
+            
+        else:
+            print(f"❌ SD API Error: {response.status_code} - {response.text}")
+            raise Exception(f"SD API Error: {response.status_code}")
+
+    except requests.exceptions.ConnectionError:
+        print("❌ Connection Refused: ตรวจสอบว่า Stability Matrix เปิดอยู่และใส่ --api แล้วหรือยัง")
+        raise Exception("Cannot connect to Stability Matrix (Is it running?)")
+        
+    except Exception as e:
+        print(f"❌ Gen Image Error: {e}")
+        raise e
     
 @app.get("/")
 def root():

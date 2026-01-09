@@ -15,3 +15,5 @@ pymupdf>=1.23.9
 langchain
 langchain-community
 faiss-cpu
+pythainlp 
+python-crfsuite
