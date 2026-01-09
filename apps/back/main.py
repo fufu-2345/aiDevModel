@@ -19,8 +19,7 @@ from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 from pythainlp.tag import NER
 
 from database import create_db_and_tables, get_session
-from models import movieTitle, chapterContent, EntityContent
-import rag
+from models import movieTitle, chapterContent
 import backprocess
 
 @asynccontextmanager
@@ -40,9 +39,7 @@ app.add_middleware(
 )
 
 ollamaURL = "http://localhost:11434/api/generate"
-# extractModel = "gemma2:9b"
 extractModel = "scb10x/typhoon2.1-gemma3-12b:latest" 
-# extractModel = "gemma2:9b"
 transModel = "gemma2:9b"
 stabilityModel = "C:\stability matrix\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
 app.mount("/static", StaticFiles(directory="public"), name="static")
@@ -218,50 +215,6 @@ def get_movie(movie_id: int, session: Session = Depends(get_session)):
 def get_movie_chapters(movie_id: int, session: Session = Depends(get_session)):
     return session.exec(select(chapterContent).where(chapterContent.movieId == movie_id).order_by(chapterContent.episodeNumber)).all()#แก้ให้เอาแค่เกือบครบ
 
-@app.get("/extract/{chapter_id}", response_model=chapterContent)
-async def get_chapter_translated_summary(chapter_id: int, session: Session = Depends(get_session)):
-    start = time.perf_counter()
-    chapter = session.get(chapterContent, chapter_id)
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-    
-    original_text = chapter.chapterDetail 
-    full_translated_text = ""
-    if original_text:
-        chunks = original_text.split("\n\n")
-        translated_chunks = []
-        for chunk in chunks:
-            if chunk.strip():
-                try:
-                    result = await translator.translate(chunk, dest='en') 
-                    translated_chunks.append(result.text)
-                except Exception as e:
-                    translated_chunks.append(chunk)
-            else:
-                translated_chunks.append("")
-        full_translated_text = "\n\n".join(translated_chunks)
-        
-    if full_translated_text:
-        try:
-            prompt = f"Summarize the entire plot of this in one long sentence, return only one sentence.\n\nSource Text:\n{full_translated_text}"
-            payload = {
-                "model": transModel,
-                "prompt": prompt,
-                "stream": False
-            }
-            async with httpx.AsyncClient(timeout=600.0) as client:
-                response = await client.post(ollamaURL, json=payload)
-                response.raise_for_status()
-                ollama_result = response.json().get("response", "")
-                chapter.chapterDetailEng = ollama_result
-                session.add(chapter)
-                session.commit()
-                session.refresh(chapter)
-        except Exception as e:
-            chapter.chapterDetail = full_translated_text
-    print(f"extract time: {time.perf_counter() - start:.3f} seconds")
-    return chapter
-
 @app.get("/genPic/{chapterId}")
 def genPic(chapterId: int, session: Session = Depends(get_session)):
     start = time.perf_counter()
@@ -346,213 +299,46 @@ def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Chapter not found")
     return chapter
 
-@app.get("/tempReadPDF")
-def readddpdf(file_path: str = "คัมภีร์วิถีเซียน0001-0500.pdf"):
-    path = file_path.strip('"').strip("'") 
-    try:
-        result = ""
-        with fitz.open(path) as doc:
-            for page_num, page in enumerate(doc):
-                if(page_num<=1):
-                    continue
-                if(page_num>=7):
-                    break
-                text = clearASCII(page.get_text() or "")
-                text = clearThaiTypeing(text)
-                result += text      
-        result=clearNewline(result)
-        return {result}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"error: {str(e)}") 
-    
-@app.get("/tempReadPDFnoClear")
-def readddpdf(file_path: str = "คัมภีร์วิถีเซียน0001-0500.pdf"):
-    path = file_path.strip('"').strip("'") 
-    try:
-        result = ""
-        with fitz.open(path) as doc:
-            for page_num, page in enumerate(doc):
-                if(page_num<=1):
-                    continue
-                if(page_num>=7):
-                    break
-                text = clearASCII(page.get_text() or "")
-                text = clearThaiTypeing(text)
-                result += text      
-        return {result}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"error: {str(e)}") 
-
-# @app.get("/extractEntities/{chapter_id}")
-# async def extract_entities(chapter_id: int, session: Session = Depends(get_session)):
-#     start = time.perf_counter()
-#     chapterDetail = session.get(chapterContent, chapter_id).chapterDetail
-#     # chunks = chapterDetail.split("\n")
-#     # translate = ""
-#     # if chapterDetail:
-#     #     chunks = chapterDetail.split("\n")
-#     #     temp = []
-#     #     for chunk in chunks:
-#     #         if chunk.strip():
-#     #             try:
-#     #                 result = await translator.translate(chunk, dest='en') 
-#     #                 temp.append(result.text)
-#     #             except Exception as e:
-#     #                 return {"err": e}
-#     #         else:
-#     #             temp.append("")
-#     #     translate = "\n".join(temp)
-#     # else:
-#     #     return {"result": "No content found in this chapter."}
-    
-#     # print(f"translate time: {time.perf_counter() - start:.3f} seconds")
-#     # return translate
-#     # start=time.perf_counter()   
-    
-#         # ช่วยสกัดชื่อคน ชื่อสถานที่ และชื่อสิ่งของให้หน่อยโดยที่ชื่อคนถ้ามีชื่อรองหรือฉายาให้เอามาใส่ใน altName
-    
-#     # {{
-#     #     "characters": [
-#     #         {{
-#     #             "name": "ชื่อตัวละคร",
-#     #             "altName": ["ฉายา", "ชื่ออื่นๆ"]
-#     #         }}
-#     #     ],
-#     #     "locations": ["สถานที่ 1", "สถานที่ 2"],
-#     #     "items": [
-#     #         {{ "name": "ชื่อสิ่งของ", "description": "คำอธิบายสั้นๆ" }}
-#     #     ]
-#     # }}
-
-#     # --- เริ่มต้นเนื้อหา ---
-#     # 
-#     # --- จบเนื้อหา ---
-#     prompt = f"""
-#     Please extract characters, locations, and items from the text below. For characters, if they have an alias or nickname, include it in the "altName" field.
-
-#     Return the output in the following JSON format:
-
-#     {{
-#         "characters": [
-#             {{
-#                 "name": "Character Name",
-#                 "altName": ["Nickname", "Alias"]
-#             }}
-#         ],
-#         "locations": ["Location 1", "Location 2"],
-#         "items": [
-#             {{ "name": "Item Name", "description": "Short description" }}
-#         ]
-#     }}
-
-#     --- Content Start ---
-#     {chapterDetail}
-#     --- Content End ---
-#         """
-
-#     payload = {
-#         "model": extractModel,
-#         "prompt": prompt,
-#         "stream": False,
-#         "options": {
-#             "num_ctx": 8192, # เพิ่ม Context Window เผื่อเนื้อหายาว
-#             "temperature": 0.1 # ลดความมั่ว ให้ตอบตามโครงสร้าง 
-#         },
-#         "format": "json"
-#     }
-    
+# @app.get("/tempReadPDF")
+# def readddpdf(file_path: str = "คัมภีร์วิถีเซียน0001-0500.pdf"):
+#     path = file_path.strip('"').strip("'") 
 #     try:
-#         async with httpx.AsyncClient(timeout=1800.0) as client:
-#             response = await client.post(ollamaURL, json=payload)
-#             response.raise_for_status()
-#             result_text = response.json().get("response", "")
-            
-#             try:
-#                 cleaned_text = result_text.replace("```json", "").replace("```", "").strip()
-#                 json_data = json.loads(cleaned_text)
-                
-#                 alias_map = {}
-                
-#                 if "characters" in json_data:
-#                     for char in json_data["characters"]:
-#                         main_name = char.get("canonical_name")
-#                         if main_name:
-#                             alias_map[main_name] = main_name
-#                             for alias in char.get("aliases", []):
-#                                 alias_map[alias] = main_name
-#                 json_data["rag_lookup_map"] = alias_map
-#                 print(f"Extraction time: {time.perf_counter() - start:.3f} seconds")
-#                 return json_data
-#             except json.JSONDecodeError:
-#                 return {"error": "Failed to parse JSON", "raw_output": result_text}
+#         result = ""
+#         with fitz.open(path) as doc:
+#             for page_num, page in enumerate(doc):
+#                 if(page_num<=1):
+#                     continue
+#                 if(page_num>=7):
+#                     break
+#                 text = clearASCII(page.get_text() or "")
+#                 text = clearThaiTypeing(text)
+#                 result += text      
+#         result=clearNewline(result)
+#         return {result}
+
 #     except Exception as e:
-#         print(f"Error during extraction: {e}")
-#         raise HTTPException(status_code=500, detail=f"AI Extraction Error: {e}")
+#         raise HTTPException(status_code=500, detail=f"error: {str(e)}") 
+    
+# @app.get("/tempReadPDFnoClear")
+# def readddpdf(file_path: str = "คัมภีร์วิถีเซียน0001-0500.pdf"):
+#     path = file_path.strip('"').strip("'") 
+#     try:
+#         result = ""
+#         with fitz.open(path) as doc:
+#             for page_num, page in enumerate(doc):
+#                 if(page_num<=1):
+#                     continue
+#                 if(page_num>=7):
+#                     break
+#                 text = clearASCII(page.get_text() or "")
+#                 text = clearThaiTypeing(text)
+#                 result += text      
+#         return {result}
 
-@app.get("/extractEntities/{chapter_id}")
-async def extractEntities(chapter_id: int, session: Session = Depends(get_session)):
-    start = time.perf_counter()
-    chapter = session.get(chapterContent, chapter_id)
-
-    try:
-        ner = NER("thainer")
-        tags = ner.tag(chapter.chapterDetail)
-        
-        characters = set()
-        locations = set()
-        
-        current_entity = []
-        current_type = None
-
-        for word, tag in tags:
-            # B-PERSON, B-LOCATION, B-ORGANIZATION
-            if tag.startswith("B-"):
-                if current_entity: # บันทึกตัวก่อนหน้า
-                    full_word = "".join(current_entity)
-                    if "PERSON" in current_type: characters.add(full_word)
-                    elif "LOCATION" in current_type: locations.add(full_word)
-                
-                current_entity = [word]
-                current_type = tag[2:] # ตัด B- ออก
-                
-            # I-PERSON, I-LOCATION (คำต่อเนื่อง)
-            elif tag.startswith("I-") and current_type and tag[2:] == current_type:
-                current_entity.append(word)
-            
-            else: # O หรือ Tag อื่นๆ
-                if current_entity: # จบ Entity เดิม บันทึกลง set
-                    full_word = "".join(current_entity)
-                    if "PERSON" in current_type: characters.add(full_word)
-                    elif "LOCATION" in current_type: locations.add(full_word)
-                current_entity = []
-                current_type = None
-        
-        # เก็บตกตัวสุดท้ายถ้ามีค้างอยู่
-        if current_entity:
-            full_word = "".join(current_entity)
-            if "PERSON" in current_type: characters.add(full_word)
-            elif "LOCATION" in current_type: locations.add(full_word)
-
-        print(f"PyThaiNLP Extraction time: {time.perf_counter() - start:.3f} seconds")
-        
-        # ส่งกลับเลยโดยไม่ต้องกรองคำสั้น
-        return {
-            "characters": list(characters),
-            "locations": list(locations),
-            "items": []
-        }
-
-    except Exception as e:
-        print(f"PyThaiNLP Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Extraction Error: {e}")
-
-    except Exception as e:
-        print(f"PyThaiNLP Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Extraction Error: {e}")
-
-async def process_chunk2(chunk_text: str, client: httpx.AsyncClient, extractModel: str):
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"error: {str(e)}") 
+    
+async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel: str):
     prompt = f"""
     Role
     คุณคือ AI Assistant ผู้เชี่ยวชาญด้านการสกัดข้อมูลภาพ (Visual Extraction) สำหรับงาน Generative AI
@@ -566,7 +352,7 @@ async def process_chunk2(chunk_text: str, client: httpx.AsyncClient, extractMode
     Requirements:
     - Name: ระบุชื่อหลัก (Main Name) ที่เป็นทางการที่สุด
     - Alt Names: ระบุชื่อเล่น ฉายา หรือชื่อเรียกอื่น (ถ้ามี) ใส่ใน List
-    - Visual Tags: คำศัพท์สำคัญเกี่ยวกับรูปลักษณ์ (ภาษาไทย) คั่นด้วยเครื่องหมายคอมมา
+    - Visual Tags: ขอเฉพาะคำนามหรือคำคุณศัพท์ที่ระบุรูปลักษณ์ (เช่น ผมแดง, ชุดเกราะ, เก่าแก่) ห้ามใส่คำกิริยาหรือการกระทำ (เช่น เดิน, กิน, พูด, ต่อสู้) คั่นด้วยคอมมา
 
     Output Format (JSON Only):
     {{
@@ -611,7 +397,7 @@ async def process_chunk2(chunk_text: str, client: httpx.AsyncClient, extractMode
     except Exception as e:
         return None
 
-@app.get("/extractEntities2/{chapter_id}")
+@app.get("/extractEntities/{chapter_id}")
 async def extract_entities2(chapter_id: int, session: Session = Depends(get_session)):
     start = time.perf_counter()
     
@@ -627,10 +413,15 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
         chunks = [chapterDetail]
     else:
         chunk_size = (total_lines + 9) // 10
+        overlap = 2
+        step = max(1, chunk_size - overlap)
         chunks = []
-        for i in range(0, total_lines, chunk_size):
-            chunk_text = "\n".join(lines[i:i + chunk_size])
+        for i in range(0, total_lines, step):
+            chunk_lines = lines[i:i + chunk_size]
+            chunk_text = "\n".join(chunk_lines)
             chunks.append(chunk_text)
+            if i + chunk_size >= total_lines:
+                break
             
     print(f"{len(chunks)} chunks")
     results = []
@@ -638,7 +429,8 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
     async with httpx.AsyncClient(timeout=1800.0) as client:
         for idx, chunk in enumerate(chunks):
             print(idx)
-            res = await process_chunk2(chunk, client, extractModel)
+            print(len(chunk))
+            res = await processChunk(chunk, client, extractModel)
             results.append(res)
 
     merged_entities = {}
@@ -650,23 +442,28 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
             e_type = entity.get("type")
             name = entity.get("name")
             
-            # Data validation
             if not e_type or not name:
                 continue
                 
-            # Normalize keys to handle case sensitivity issues
-            e_type = e_type.strip().capitalize() # Ensure Character/Location/Item formatting
+            e_type = e_type.strip().capitalize() 
             name = name.strip()
             key = (e_type, name)
             
-            current_tags_str = entity.get("VisualTags", "")
-            if isinstance(current_tags_str, list): 
-                current_tags = set(t.strip() for t in current_tags_str if t.strip())
+            current_tags_input = entity.get("VisualTags")
+            if current_tags_input is None:
+                current_tags = set()
+            elif isinstance(current_tags_input, list): 
+                current_tags = set(t.strip() for t in current_tags_input if t.strip())
             else:
-                current_tags = set(t.strip() for t in current_tags_str.split(",") if t.strip())
+                current_tags = set(t.strip() for t in str(current_tags_input).split(",") if t.strip())
 
-            # จัดการ Alt Names
-            current_alts = set(entity.get("altNames", []))
+            current_alts_input = entity.get("altNames")
+            if current_alts_input is None:
+                current_alts = set()
+            elif isinstance(current_alts_input, list):
+                current_alts = set(current_alts_input)
+            else:
+                current_alts = set([str(current_alts_input)])
 
             if key not in merged_entities:
                 merged_entities[key] = {
@@ -676,19 +473,9 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
                     "VisualTags": current_tags
                 }
             else:
-                # Merge Tags
                 merged_entities[key]["VisualTags"].update(current_tags)
-                
-                # Merge Alt Names
                 merged_entities[key]["altNames"].update(current_alts)
-                
-                # Update Description (Keep the longest one usually contains more detail)
-                # old_desc = merged_entities[key]["thai_description"]
-                # new_desc = entity.get("thai_description", "")
-                # if len(new_desc) > len(old_desc):
-                #     merged_entities[key]["thai_description"] = new_desc
 
-    # --- Final Formatting (Updated: Grouping by Category) ---
     final_output = {
         "characters": [],
         "locations": [],
@@ -696,11 +483,9 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
     }
 
     for key, data in merged_entities.items():
-        # Convert Sets back to Lists/Strings for JSON output
         data["VisualTags"] = ", ".join(sorted(list(data["VisualTags"])))
         data["altNames"] = sorted(list(data["altNames"]))
         
-        # Categorize output
         e_type_lower = data["type"].lower()
         
         if "character" in e_type_lower:
@@ -710,10 +495,8 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
         elif "item" in e_type_lower:
             final_output["items"].append(data)
         else:
-            # กรณี AI ส่ง Type แปลกๆ มา ให้ใส่ items เป็นค่า Default หรือสร้างหมวด others
             final_output["items"].append(data)
-
-    print(f"Total Visual Extraction time: {time.perf_counter() - start:.3f} seconds")
+    print(f"Time: {time.perf_counter() - start:.3f} seconds")
     return final_output
 
 # -----------------------------------------------------------------
@@ -738,8 +521,6 @@ async def trigger_rag(
     return {"status": "started", "message": "Wobackprocessrker is processing in background"}
 
 import base64
-import uuid
-from datetime import datetime
 SD_API_URL = "http://127.0.0.1:7860/sdapi/v1/txt2img"
 
 SD_MODEL_CHECKPOINT = "juggernautXL_ragnarokBy.safetensors"
