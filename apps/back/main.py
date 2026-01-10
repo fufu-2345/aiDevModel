@@ -7,7 +7,6 @@ from typing import List
 import requests
 from fastapi.staticfiles import StaticFiles
 import json
-import io
 import os
 import time
 import re
@@ -86,18 +85,24 @@ def clearThaiTypeing(text: str) -> str:
         fixed_text = fixed_text.replace(wrong_word, correct_word)    
     return fixed_text
 
+import re
+
 def clearNewline(text: str) -> str:
     def replacer(match):
-        if " \n" in match.group():
-            return "\n"
-        return " "
-    return re.sub(r"(?: \n)+|\n", replacer, text)
+        found = match.group()
+        if found.count('\n') > 1:
+            return '\n'
+        if ' \n' in found:
+            return '\n'
+        return ' '
+    pattern = r"[ ]*\n[ \n]*"
+    return re.sub(pattern, replacer, text).strip()
 
 @app.get("/movies/", response_model=List[movieTitle])
 def get_movies(session: Session = Depends(get_session)):
     movies = session.exec(select(movieTitle)).all()
     return movies
-
+    
 @app.post("/upload-movie/")
 async def upload_movie(
     title: str = Form(...),
@@ -298,46 +303,9 @@ def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
     return chapter
-
-# @app.get("/tempReadPDF")
-# def readddpdf(file_path: str = "คัมภีร์วิถีเซียน0001-0500.pdf"):
-#     path = file_path.strip('"').strip("'") 
-#     try:
-#         result = ""
-#         with fitz.open(path) as doc:
-#             for page_num, page in enumerate(doc):
-#                 if(page_num<=1):
-#                     continue
-#                 if(page_num>=7):
-#                     break
-#                 text = clearASCII(page.get_text() or "")
-#                 text = clearThaiTypeing(text)
-#                 result += text      
-#         result=clearNewline(result)
-#         return {result}
-
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"error: {str(e)}") 
     
-# @app.get("/tempReadPDFnoClear")
-# def readddpdf(file_path: str = "คัมภีร์วิถีเซียน0001-0500.pdf"):
-#     path = file_path.strip('"').strip("'") 
-#     try:
-#         result = ""
-#         with fitz.open(path) as doc:
-#             for page_num, page in enumerate(doc):
-#                 if(page_num<=1):
-#                     continue
-#                 if(page_num>=7):
-#                     break
-#                 text = clearASCII(page.get_text() or "")
-#                 text = clearThaiTypeing(text)
-#                 result += text      
-#         return {result}
+# ----------------------------------------------- Entity
 
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"error: {str(e)}") 
-    
 async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel: str):
     prompt = f"""
     Role

@@ -2,7 +2,7 @@ from sqlmodel import Session, select
 import numpy as np
 import faiss
 from database import engine
-from models import chapterContent, ChunkContent, movieTitle, EntityContent
+from models import chapterContent, movieTitle
 import rag
 import traceback
 import time
