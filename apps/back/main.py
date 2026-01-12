@@ -38,7 +38,7 @@ app.add_middleware(
 )
 
 ollamaURL = "http://localhost:11434/api/generate"
-extractModel = "scb10x/typhoon2.1-gemma3-12b:latest" 
+extractModel = "scb10x/typhoon2.1-gemma3-12b:latest"
 transModel = "gemma2:9b"
 stabilityModel = "C:\stability matrix\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
 app.mount("/static", StaticFiles(directory="public"), name="static")
@@ -308,32 +308,41 @@ def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
 
 async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel: str):
     prompt = f"""
-    Role
-    คุณคือ AI Assistant ผู้เชี่ยวชาญด้านการสกัดข้อมูลภาพ (Visual Extraction) สำหรับงาน Generative AI
+    Role:
+    คุณคือ AI Visual Director ผู้เชี่ยวชาญด้านการถอดรหัสภาพจากนิยายเพื่อนำไปสร้างภาพประกอบ
 
-    Task
-    อ่านข้อความที่ได้รับ แล้วสกัด Entity 3 ประเภท:
-    1. Character (ตัวละคร)
-    2. Location (สถานที่)
-    3. Item (วัตถุสำคัญ)
+    Task:
+    อ่านข้อความ Input Text แล้วสกัดข้อมูล Entity (Character, Location, Item) ออกมาเป็น JSON
+
+    ต้องแยกคุณลักษณะออกเป็น 2 ส่วนให้ชัดเจน:
+    1. "IdentityTags": ลักษณะทางกายภาพที่ติดตัว เปลี่ยนแปลงยาก (เช่น สีผม, สีตา, ทรงผมหลัก, สีผิว, เพศ, รูปร่าง, อายุ, เผ่าพันธุ์)
+    2. "ModifierTags": สิ่งที่เปลี่ยนแปลงได้ตามสถานการณ์ (เช่น เสื้อผ้า, เครื่องประดับ, คราบเลือด, รอยเปื้อน, อารมณ์, ท่าทาง)
+    **Important Rule:** หากมีหลายรูปลักษณ์ ให้ยึด "รูปลักษณ์แรก" ที่ปรากฏ
 
     Requirements:
-    - Name: ระบุชื่อหลัก (Main Name) ที่เป็นทางการที่สุด
-    - Alt Names: ระบุชื่อเล่น ฉายา หรือชื่อเรียกอื่น (ถ้ามี) ใส่ใน List
-    - Visual Tags: ขอเฉพาะคำนามหรือคำคุณศัพท์ที่ระบุรูปลักษณ์ (เช่น ผมแดง, ชุดเกราะ, เก่าแก่) ห้ามใส่คำกิริยาหรือการกระทำ (เช่น เดิน, กิน, พูด, ต่อสู้) คั่นด้วยคอมมา
-
+    - Name: ชื่อหลักที่เป็นทางการ ภาษาไทย
+    - AltNames: ชื่อเล่น หรือฉายา ภาษาไทย (ถ้ามี)
+    - Visual Tags: ขอเฉพาะคำนามหรือคำคุณศัพท์ที่ระบุรูปลักษณ์ (เช่น ผมแดง, ชุดเกราะ, เก่าแก่) ห้ามใส่คำกิริยาหรือการกระทำ (เช่น เดิน, กิน, พูด, ต่อสู้) คั่นด้วยคอมมา 
+    
     Output Format (JSON Only):
     {{
         "entities": [
             {{
                 "type": "Character", 
-                "name": "ชื่อหลัก",
-                "altNames": ["ชื่อรอง1", "ชื่อรอง2"],
-                "VisualTags": "tag1, tag2, tag3"
+                "name": "ชื่อตัวละคร",
+                "altNames": ["ชื่อเรียกอื่น"],
+                "IdentityTags": "tag1, tag2", 
+                "ModifierTags": "tag1, tag2"
             }},
             {{
                 "type": "Location",
                 "name": "ชื่อสถานที่",
+                "altNames": [],
+                "VisualTags": "tag1, tag2"
+            }},
+            {{
+                "type": "Item",
+                "name": "ชื่อวัตถุ",
                 "altNames": [],
                 "VisualTags": "tag1, tag2"
             }}
@@ -350,11 +359,12 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
         "stream": False,
         "options": {
             "num_ctx": 4096, 
-            "temperature": 0.5
+            "temperature": 0.75
         },
         "format": "json"
     }
 
+    print(len(prompt))
     try:
         response = await client.post(ollamaURL, json=payload)
         response.raise_for_status()
@@ -365,13 +375,21 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
     except Exception as e:
         return None
 
+def parse_tags_to_set(tag_input):
+    if not tag_input:
+        return set()
+    if isinstance(tag_input, list):
+         return set(t.strip() for t in tag_input if t.strip() and isinstance(t, str))
+    
+    tag_str = str(tag_input)
+    return set(t.strip() for t in tag_str.split(",") if t.strip())
+
 @app.get("/extractEntities/{chapter_id}")
 async def extract_entities2(chapter_id: int, session: Session = Depends(get_session)):
     start = time.perf_counter()
-    
     chapter_obj = session.get(chapterContent, chapter_id)
     if not chapter_obj or not chapter_obj.chapterDetail:
-        return {"result": "No content found in this chapter."}  
+        return {"result": "No content found."}
     
     chapterDetail = chapter_obj.chapterDetail
     lines = chapterDetail.split('\n')
@@ -391,102 +409,187 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
             if i + chunk_size >= total_lines:
                 break
             
-    print(f"{len(chunks)} chunks")
     results = []
-    
+
     async with httpx.AsyncClient(timeout=1800.0) as client:
         for idx, chunk in enumerate(chunks):
-            print(idx)
-            print(len(chunk))
-            res = await processChunk(chunk, client, extractModel)
-            results.append(res)
-
+            print(f"{idx+1}")
+            res = await processChunk(chunk, client, extractModel) 
+            if res:
+                results.append(res)
+            else:
+                print(f"Chunk {idx+1} err")
     merged_entities = {}
     for res in results:
         if not res or not res.get("entities"):
             continue
-        
         for entity in res["entities"]:
             e_type = entity.get("type")
             name = entity.get("name")
-            
             if not e_type or not name:
-                continue
-                
+                continue   
             e_type = e_type.strip().capitalize() 
             name = name.strip()
             key = (e_type, name)
-            
-            current_tags_input = entity.get("VisualTags")
-            if current_tags_input is None:
-                current_tags = set()
-            elif isinstance(current_tags_input, list): 
-                current_tags = set(t.strip() for t in current_tags_input if t.strip())
-            else:
-                current_tags = set(t.strip() for t in str(current_tags_input).split(",") if t.strip())
-
             current_alts_input = entity.get("altNames")
-            if current_alts_input is None:
-                current_alts = set()
-            elif isinstance(current_alts_input, list):
-                current_alts = set(current_alts_input)
-            else:
-                current_alts = set([str(current_alts_input)])
-
+            current_alts = set()
+            if current_alts_input:
+                if isinstance(current_alts_input, list):
+                    current_alts = set(str(a).strip() for a in current_alts_input if str(a).strip())
+                else:
+                    current_alts = set([str(current_alts_input).strip()])
             if key not in merged_entities:
                 merged_entities[key] = {
                     "type": e_type,
                     "name": name,
-                    "altNames": current_alts, 
-                    "VisualTags": current_tags
+                    "altNames": set(),
+                    "VisualTags": set(),    
+                    "IdentityTags": set(),   
+                    "ModifierTags": set()   
                 }
+            merged_entities[key]["altNames"].update(current_alts)
+            if "Character" in e_type:
+                i_set = parse_tags_to_set(entity.get("IdentityTags"))
+                m_set = parse_tags_to_set(entity.get("ModifierTags"))
+                merged_entities[key]["IdentityTags"].update(i_set)
+                merged_entities[key]["ModifierTags"].update(m_set)
             else:
-                merged_entities[key]["VisualTags"].update(current_tags)
-                merged_entities[key]["altNames"].update(current_alts)
-
+                v_set = parse_tags_to_set(entity.get("VisualTags"))
+                merged_entities[key]["VisualTags"].update(v_set)
     final_output = {
         "characters": [],
         "locations": [],
         "items": []
     }
-
     for key, data in merged_entities.items():
-        data["VisualTags"] = ", ".join(sorted(list(data["VisualTags"])))
         data["altNames"] = sorted(list(data["altNames"]))
-        
         e_type_lower = data["type"].lower()
-        
         if "character" in e_type_lower:
+            data["IdentityTags"] = ", ".join(sorted(list(data["IdentityTags"])))
+            data["ModifierTags"] = ", ".join(sorted(list(data["ModifierTags"])))
+            data.pop("VisualTags", None) 
             final_output["characters"].append(data)
-        elif "location" in e_type_lower:
-            final_output["locations"].append(data)
-        elif "item" in e_type_lower:
-            final_output["items"].append(data)
         else:
-            final_output["items"].append(data)
+            data["VisualTags"] = ", ".join(sorted(list(data["VisualTags"])))
+            data.pop("IdentityTags", None)
+            data.pop("ModifierTags", None)
+            
+            if "location" in e_type_lower:
+                final_output["locations"].append(data)
+            else:
+                final_output["items"].append(data)
     print(f"Time: {time.perf_counter() - start:.3f} seconds")
     return final_output
 
 # -----------------------------------------------------------------
 
-@app.post("/movies/{movie_id}/process-rag")
-async def trigger_rag(
-    movie_id: int, 
-    background_tasks: BackgroundTasks,
-    session: Session = Depends(get_session)
-):
-    movie = session.get(movieTitle, movie_id)
-    if not movie:
-        raise HTTPException(status_code=404, detail="Movie not found")
+CHUNK_SIZE_LIMIT = 1500 
+SLEEP_BETWEEN_CHUNKS = 1
+
+class StoryRequest(BaseModel):
+    text: str
+    chunk_size: Optional[int] = DEFAULT_CHUNK_SIZE
+
+class SceneResult(BaseModel):
+    chunk_id: int
+    thai_text: str
+    english_text: str
+    sd_prompt: str
+    error: Optional[str] = None
+
+# ==========================================
+# Helper Functions
+# ==========================================
+def smart_chunker(text: str, max_length: int) -> List[str]:
+    """
+    แบ่งข้อความเป็น chunk โดยตัดที่ 'ย่อหน้า' (\n)
+    """
+    paragraphs = text.split('\n')
+    chunks = []
+    current_chunk = ""
+
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+            
+        if len(current_chunk) + len(para) <= max_length:
+            current_chunk += para + "\n\n"
+        else:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            current_chunk = para + "\n\n"
     
-    # ส่งงานไปให้ backprocess ทำ
-    movie.status = "processing"
-    session.add(movie)
-    session.commit()
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+        
+    return chunks
+
+# ==========================================
+# API Endpoints
+# ==========================================
+@app.post("/generate-prompts", response_model=List[SceneResult])
+def generate_prompts(request: StoryRequest):
+    """
+    รับ Text นิยาย -> ตัดแบ่ง -> แปล -> สร้าง Prompt ด้วย Ollama
+    """
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+    translator = Translator()
     
-    background_tasks.add_task(backprocess.process_movie_background, movie_id)
+    # 1. แบ่ง Text เป็น Chunk
+    print(f"✂️  Splitting text... (Limit: {request.chunk_size})")
+    chunks = smart_chunker(request.text, request.chunk_size)
+    print(f"📦 Total Chunks: {len(chunks)}")
     
-    return {"status": "started", "message": "Wobackprocessrker is processing in background"}
+    final_results = []
+
+    for index, chunk in enumerate(chunks):
+        print(f"--- Processing Chunk {index + 1}/{len(chunks)} ---")
+        chunk_result = SceneResult(
+            chunk_id=index + 1,
+            thai_text=chunk,
+            english_text="",
+            sd_prompt=""
+        )
+        
+        try:
+            # 2. แปลไทยเป็นอังกฤษ
+            translation = translator.translate(chunk, src='th', dest='en')
+            english_text = translation.text
+            chunk_result.english_text = english_text
+            
+            # 3. ใช้ Ollama สกัด Visual Description
+            system_prompt = (
+                "You are an expert AI art director for Stable Diffusion. "
+                "Read the following story segment. "
+                "Describe the SINGLE most important visual scene that represents this segment. "
+                "Focus on: Character appearance, Environment/Background, Lighting, and Art Style. "
+                "Format output as a comma-separated Stable Diffusion prompt list. "
+                "Do NOT include explanation, just the prompt tags."
+            )
+            
+            response = ollama.chat(model=OLLAMA_MODEL, messages=[
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': f"Story segment: {english_text}"},
+            ])
+            
+            chunk_result.sd_prompt = response['message']['content']
+            
+            # พักกันโดน Google Block
+            time.sleep(SLEEP_BETWEEN_CHUNKS)
+
+        except Exception as e:
+            print(f"❌ Error: {str(e)}")
+            chunk_result.error = str(e)
+            chunk_result.sd_prompt = "Error generating prompt"
+
+        final_results.append(chunk_result)
+
+    return final_results
+
+# --------------------------------------------------------------
 
 import base64
 SD_API_URL = "http://127.0.0.1:7860/sdapi/v1/txt2img"

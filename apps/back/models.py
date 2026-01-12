@@ -21,3 +21,17 @@ class chapterContent(SQLModel, table=True):
     movieId: Optional[int] = Field(default=None, foreign_key="movietitle.id")
     is_processed: bool = Field(default=False)
     movie: Optional[movieTitle] = Relationship(back_populates="chapters")
+    
+# class Entity(SQLModel, table=True):
+#     id: Optional[int] = Field(default=None, primary_key=True)
+#     type: str
+#     name: str
+#     visual_tags: str = Field(default="")
+#     movie_id: Optional[int] = Field(default=None, foreign_key="movietitle.id")
+#     refpath: str = Field(default="")
+#     chapter_found_id: Optional[int] = Field(default=None, foreign_key="chaptercontent.id")
+
+# class altEntityName(SQLModel, table=True):
+#     id: Optional[int] = Field(default=None, primary_key=True)
+#     altName: str[int] = Field(sa_column=Column("altName", Text))
+#     entity_id: Optional[int] = Field(default=None, foreign_key="entity.id")
