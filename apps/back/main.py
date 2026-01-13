@@ -19,7 +19,6 @@ from pythainlp.tag import NER
 
 from database import create_db_and_tables, get_session
 from models import movieTitle, chapterContent
-import backprocess
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -379,7 +378,7 @@ def parse_tags_to_set(tag_input):
     if not tag_input:
         return set()
     if isinstance(tag_input, list):
-         return set(t.strip() for t in tag_input if t.strip() and isinstance(t, str))
+        return set(t.strip() for t in tag_input if t.strip() and isinstance(t, str))
     
     tag_str = str(tag_input)
     return set(t.strip() for t in tag_str.split(",") if t.strip())
@@ -482,28 +481,14 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
     return final_output
 
 # -----------------------------------------------------------------
+# -----------------------------------------------------------------
+# -----------------------------------------------------------------
 
 CHUNK_SIZE_LIMIT = 1500 
 SLEEP_BETWEEN_CHUNKS = 1
+DEFAULT_CHUNK_SIZE = 600.0
 
-class StoryRequest(BaseModel):
-    text: str
-    chunk_size: Optional[int] = DEFAULT_CHUNK_SIZE
-
-class SceneResult(BaseModel):
-    chunk_id: int
-    thai_text: str
-    english_text: str
-    sd_prompt: str
-    error: Optional[str] = None
-
-# ==========================================
-# Helper Functions
-# ==========================================
 def smart_chunker(text: str, max_length: int) -> List[str]:
-    """
-    แบ่งข้อความเป็น chunk โดยตัดที่ 'ย่อหน้า' (\n)
-    """
     paragraphs = text.split('\n')
     chunks = []
     current_chunk = ""
@@ -525,65 +510,84 @@ def smart_chunker(text: str, max_length: int) -> List[str]:
         
     return chunks
 
-# ==========================================
-# API Endpoints
-# ==========================================
-@app.post("/generate-prompts", response_model=List[SceneResult])
-def generate_prompts(request: StoryRequest):
-    """
-    รับ Text นิยาย -> ตัดแบ่ง -> แปล -> สร้าง Prompt ด้วย Ollama
-    """
-    if not request.text.strip():
-        raise HTTPException(status_code=400, detail="Text cannot be empty")
+def call_ollama_via_http(prompt_text: str, model: str) -> str:
+    system_prompt = (
+        "You are an expert AI art director for Stable Diffusion. "
+        "Read the following story segment. "
+        "Describe the SINGLE most important visual scene that represents this segment. "
+        "Focus on: Character appearance, Environment/Background, Lighting, and Art Style. "
+        "Format output as a comma-separated Stable Diffusion prompt list. "
+        "Do NOT include explanation, just the prompt tags."
+    )
 
+    payload = {
+        "model": model,
+        "prompt": f"Story segment: {prompt_text}",
+        "system": system_prompt,
+        "stream": False
+    }
+
+    try:
+        response = requests.post(
+            ollamaURL, 
+            json=payload, 
+            timeout=DEFAULT_CHUNK_SIZE
+        )
+        response.raise_for_status() 
+        
+        result_json = response.json()
+        return result_json['response']
+        
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️ Ollama Connection Error: {e}")
+        raise e
+
+@app.get("/generate-prompts/{chapter_id}")
+async def generate_prompts( 
+    chapter_id: int,
+    session: Session = Depends(get_session)
+):
+    chapter = session.get(chapterContent, chapter_id)
+
+    if not chapter:
+        raise HTTPException(status_code=404, detail=f"Chapter ID {chapter_id} not found")
+    
+    text = chapter.chapterDetail
+    if not text or not text.strip():
+        raise HTTPException(status_code=400, detail="Chapter content is empty")
     translator = Translator()
     
-    # 1. แบ่ง Text เป็น Chunk
-    print(f"✂️  Splitting text... (Limit: {request.chunk_size})")
-    chunks = smart_chunker(request.text, request.chunk_size)
+    print(f"✂️  Splitting text... (Limit: {CHUNK_SIZE_LIMIT})")
+    chunks = smart_chunker(text, CHUNK_SIZE_LIMIT)
     print(f"📦 Total Chunks: {len(chunks)}")
     
     final_results = []
 
     for index, chunk in enumerate(chunks):
         print(f"--- Processing Chunk {index + 1}/{len(chunks)} ---")
-        chunk_result = SceneResult(
-            chunk_id=index + 1,
-            thai_text=chunk,
-            english_text="",
-            sd_prompt=""
-        )
+        
+        chunk_result = {
+            "chunk_id": index + 1,
+            "english_text": "",
+            "error": None
+        }
         
         try:
-            # 2. แปลไทยเป็นอังกฤษ
-            translation = translator.translate(chunk, src='th', dest='en')
+            translation = await translator.translate(chunk, src='th', dest='en')
             english_text = translation.text
-            chunk_result.english_text = english_text
+            chunk_result["english_text"] = english_text
             
-            # 3. ใช้ Ollama สกัด Visual Description
-            system_prompt = (
-                "You are an expert AI art director for Stable Diffusion. "
-                "Read the following story segment. "
-                "Describe the SINGLE most important visual scene that represents this segment. "
-                "Focus on: Character appearance, Environment/Background, Lighting, and Art Style. "
-                "Format output as a comma-separated Stable Diffusion prompt list. "
-                "Do NOT include explanation, just the prompt tags."
-            )
+            print("🚀 Sending request to Ollama URL...")
+            sd_prompt = call_ollama_via_http(english_text, extractModel)
             
-            response = ollama.chat(model=OLLAMA_MODEL, messages=[
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': f"Story segment: {english_text}"},
-            ])
+            chunk_result["sd_prompt"] = sd_prompt
             
-            chunk_result.sd_prompt = response['message']['content']
-            
-            # พักกันโดน Google Block
             time.sleep(SLEEP_BETWEEN_CHUNKS)
 
         except Exception as e:
             print(f"❌ Error: {str(e)}")
-            chunk_result.error = str(e)
-            chunk_result.sd_prompt = "Error generating prompt"
+            chunk_result["error"] = str(e)
+            chunk_result["sd_prompt"] = "Error generating prompt"
 
         final_results.append(chunk_result)
 
@@ -605,11 +609,11 @@ def generate_image_internal(prompt: str, output_filename: str):
     payload = {
         "prompt": prompt,
         "negative_prompt": "blurry, low quality, distorted, text, watermark, bad anatomy, bad hands, lowres, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, username",
-        "steps": 25,                # จำนวนรอบ (20-30 กำลังดี)
-        "sampler_name": "Euler a",  # Sampler มาตรฐาน เร็วและสวย
-        "width": 1024,              # [Updated] ปรับเป็น 1024 เพราะ JuggernautXL เป็น SDXL
+        "steps": 25,               
+        "sampler_name": "Euler a", 
+        "width": 1024,            
         "height": 1024,
-        "cfg_scale": 7,             # ความเชื่อฟัง Prompt (7 คือค่ามาตรฐาน)
+        "cfg_scale": 7,            
         "batch_size": 1,
         
         # [NEW] บังคับให้ WebUI สลับไปใช้ Model นี้
