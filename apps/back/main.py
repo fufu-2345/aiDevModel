@@ -1,5 +1,6 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends, BackgroundTasks, Body
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 from sqlmodel import Session, select
 from pydantic import BaseModel
@@ -38,7 +39,8 @@ app.add_middleware(
 
 ollamaURL = "http://localhost:11434/api/generate"
 extractModel = "scb10x/typhoon2.1-gemma3-12b:latest"
-transModel = "gemma2:9b"
+extractModel2 = "gemma3:4b"
+transModel = "gemma3:4b"
 stabilityModel = "C:\stability matrix\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
 app.mount("/static", StaticFiles(directory="public"), name="static")
 
@@ -384,7 +386,7 @@ def parse_tags_to_set(tag_input):
     return set(t.strip() for t in tag_str.split(",") if t.strip())
 
 @app.get("/extractEntities/{chapter_id}")
-async def extract_entities2(chapter_id: int, session: Session = Depends(get_session)):
+async def extract_entities(chapter_id: int, session: Session = Depends(get_session)):
     start = time.perf_counter()
     chapter_obj = session.get(chapterContent, chapter_id)
     if not chapter_obj or not chapter_obj.chapterDetail:
@@ -480,11 +482,218 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
     print(f"Time: {time.perf_counter() - start:.3f} seconds")
     return final_output
 
+import re
+import json
+
+async def processChunk2(chunk_text: str, client: httpx.AsyncClient, extractModel: str):
+    prompt = f"""
+    Role:
+    You are an AI Visual Director.
+
+    Task:
+    Extract Entity information (Character, Location, Item) from the Input Text into a valid JSON format.
+
+    Rules:
+    1. "IdentityTags": Fixed physical traits (hair color, eye color, race, gender).
+    2. "ModifierTags": Changeable traits (clothing, emotions, dirt, poses).
+    3. Use the "first appearance" for changing traits.
+    4. Tags must be nouns/adjectives only. No verbs.
+    5. English output only.
+
+    Output JSON Format:
+    {{
+        "entities": [
+            {{
+                "type": "Character",
+                "name": "Name",
+                "altNames": [],
+                "IdentityTags": "tag1, tag2",
+                "ModifierTags": "tag1, tag2"
+            }},
+            {{
+                "type": "Location",
+                "name": "Name",
+                "altNames": [],
+                "VisualTags": "tag1, tag2"
+            }}
+        ]
+    }}
+
+    Input Text:
+    {chunk_text}
+    """
+
+    payload = {
+        "model": extractModel,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "num_ctx": 4096, 
+            "temperature": 0.2  # ลดลงเพื่อให้แม่นยำเรื่อง Format
+        },
+        "format": "json"
+    }
+
+    try:
+        response = await client.post(ollamaURL, json=payload)
+        response.raise_for_status()
+        result_text = response.json().get("response", "")
+        
+        # ค้นหา JSON ด้วย Regex
+        match = re.search(r'\{.*\}', result_text, re.DOTALL)
+        if match:
+            json_str = match.group(0)
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                # ลองซ่อม JSON แบบง่าย (กรณีมี comma เกินท้ายสุด)
+                try:
+                    corrected = re.sub(r',\s*([\]}])', r'\1', json_str)
+                    return json.loads(corrected)
+                except:
+                    print(f"JSON Broken: {result_text[:50]}...")
+                    return None
+        else:
+            print("No JSON found in response.")
+            return None
+
+    except Exception as e:
+        print(f"Process Error: {e}")
+        return None
+
+import asyncio
+
+@app.get("/extractEntities2/{chapter_id}")
+async def extract_entities2(chapter_id: int, session: Session = Depends(get_session)):
+    start = time.perf_counter()
+    chapter_obj = session.get(chapterContent, chapter_id)
+    if not chapter_obj or not chapter_obj.chapterDetail:
+        return {"result": "No content found."}
+    
+    chapterDetail = chapter_obj.chapterDetail
+    lines = chapterDetail.split('\n')
+    total_lines = len(lines)
+    
+    LINES_PER_CHUNK = 15  
+    OVERLAP = 3          
+    
+    chunks = []
+    if total_lines <= LINES_PER_CHUNK:
+        chunks = [chapterDetail]
+    else:
+        # Loop ตัดทีละ step
+        step = LINES_PER_CHUNK - OVERLAP
+        for i in range(0, total_lines, step):
+            chunk_lines = lines[i : i + LINES_PER_CHUNK]
+            # หยุดถ้า Chunk สั้นเกินไป (เหลือน้อยกว่า 3 บรรทัด) และไม่ใช่ Chunk แรก
+            if len(chunk_lines) < 3 and len(chunks) > 0:
+                break
+            chunk_text = "\n".join(chunk_lines)
+            chunks.append(chunk_text)
+
+    results = []
+    translator = Translator()
+
+    async with httpx.AsyncClient(timeout=1800.0) as client:
+        for idx, chunk in enumerate(chunks):
+            # แสดงความยาวเพื่อให้รู้ว่า Chunk เล็กลงจริงไหม
+            print(f"Chunk {idx+1}/{len(chunks)} (Length: {len(chunk)} chars)")
+            
+            # Re-init Translator ทุกครั้ง
+            translator = Translator()
+            await asyncio.sleep(2) # Delay สำคัญ
+
+            text_to_process = chunk
+            try:
+                translated = await translator.translate(chunk, src='th', dest='en')
+                if translated and translated.text:
+                    text_to_process = translated.text
+            except Exception as e:
+                print(f"Trans Warning Ch {idx+1}: {e}")
+
+            res = await processChunk2(text_to_process, client, extractModel2) 
+            if res:
+                results.append(res)
+            else:
+                print(f"Chunk {idx+1} Failed")
+
+    # --- ส่วน Merge ข้อมูล (เหมือนเดิม) ---
+    merged_entities = {}
+    for res in results:
+        if not res or not res.get("entities"):
+            continue
+        for entity in res["entities"]:
+            e_type = entity.get("type")
+            name = entity.get("name")
+            if not e_type or not name:
+                continue   
+            e_type = e_type.strip().capitalize() 
+            name = name.strip()
+            key = (e_type, name)
+            
+            # AltNames
+            current_alts_input = entity.get("altNames")
+            current_alts = set()
+            if current_alts_input:
+                if isinstance(current_alts_input, list):
+                    current_alts = set(str(a).strip() for a in current_alts_input if str(a).strip())
+                else:
+                    current_alts = set([str(current_alts_input).strip()])
+            
+            # Init Dict if not exist
+            if key not in merged_entities:
+                merged_entities[key] = {
+                    "type": e_type,
+                    "name": name,
+                    "altNames": set(),
+                    "VisualTags": set(),    
+                    "IdentityTags": set(),   
+                    "ModifierTags": set()   
+                }
+            
+            # Merge Data
+            merged_entities[key]["altNames"].update(current_alts)
+            if "Character" in e_type:
+                i_set = parse_tags_to_set(entity.get("IdentityTags"))
+                m_set = parse_tags_to_set(entity.get("ModifierTags"))
+                merged_entities[key]["IdentityTags"].update(i_set)
+                merged_entities[key]["ModifierTags"].update(m_set)
+            else:
+                v_set = parse_tags_to_set(entity.get("VisualTags"))
+                merged_entities[key]["VisualTags"].update(v_set)
+
+    # --- Final Formatting (เหมือนเดิม) ---
+    final_output = {
+        "characters": [],
+        "locations": [],
+        "items": []
+    }
+    for key, data in merged_entities.items():
+        data["altNames"] = sorted(list(data["altNames"]))
+        e_type_lower = data["type"].lower()
+        if "character" in e_type_lower:
+            data["IdentityTags"] = ", ".join(sorted(list(data["IdentityTags"])))
+            data["ModifierTags"] = ", ".join(sorted(list(data["ModifierTags"])))
+            data.pop("VisualTags", None) 
+            final_output["characters"].append(data)
+        else:
+            data["VisualTags"] = ", ".join(sorted(list(data["VisualTags"])))
+            data.pop("IdentityTags", None)
+            data.pop("ModifierTags", None)
+            
+            if "location" in e_type_lower:
+                final_output["locations"].append(data)
+            else:
+                final_output["items"].append(data)
+
+    print(f"Total Time: {time.perf_counter() - start:.3f} seconds")
+    return final_output
+
 # -----------------------------------------------------------------
 # -----------------------------------------------------------------
 # -----------------------------------------------------------------
 
-CHUNK_SIZE_LIMIT = 1500 
+CHUNK_SIZE_LIMIT = 1000 
 SLEEP_BETWEEN_CHUNKS = 1
 DEFAULT_CHUNK_SIZE = 600.0
 
@@ -510,23 +719,35 @@ def smart_chunker(text: str, max_length: int) -> List[str]:
         
     return chunks
 
+def clean_json_string(json_str: str) -> str:
+    """
+    ฟังก์ชันช่วยทำความสะอาด String ก่อนแปลงเป็น JSON
+    (เผื่อ AI ตอบมามี markdown ```json ... ``` ติดมาด้วย)
+    """
+    pattern = r"```json(.*?)```"
+    match = re.search(pattern, json_str, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return json_str.strip()
+
 def call_ollama_via_http(prompt_text: str, model: str) -> str:
     system_prompt = (
-        "You are an expert AI art director for Stable Diffusion. "
-        "Read the following story segment. "
-        "Describe the SINGLE most important visual scene that represents this segment. "
-        "Focus on: Character appearance, Environment/Background, Lighting, and Art Style. "
-        "Format output as a comma-separated Stable Diffusion prompt list. "
-        "Do NOT include explanation, just the prompt tags."
+        "You are an expert AI art director and Named Entity Recognition (NER) system. "
+        "Analyze the following story segment. "
+        "Perform two tasks:\n"
+        "1. Generate 'visual_tags': A comma-separated Stable Diffusion prompt describing the scene visually (lighting, environment, style, character appearance).\n"
+        "2. Extract 'entities': A list of specific names of characters (e.g., 'Alice', 'John') or unique named items present in the segment.\n\n"
+        "IMPORTANT: You MUST return ONLY a raw JSON object. Do not add any markdown formatting or explanation.\n"
+        "JSON Format example: { \"visual_tags\": \"1girl, sitting, cafe, sunset\", \"entities\": [\"Alice\"] }"
     )
 
     payload = {
         "model": model,
         "prompt": f"Story segment: {prompt_text}",
         "system": system_prompt,
-        "stream": False
+        "stream": False,
+        "format": "json"
     }
-
     try:
         response = requests.post(
             ollamaURL, 
@@ -534,75 +755,193 @@ def call_ollama_via_http(prompt_text: str, model: str) -> str:
             timeout=DEFAULT_CHUNK_SIZE
         )
         response.raise_for_status() 
-        
         result_json = response.json()
-        return result_json['response']
-        
+        raw_response = result_json['response']
+        try:
+            cleaned_response = clean_json_string(raw_response)
+            parsed_data = json.loads(cleaned_response)
+            
+            return {
+                "visual_tags": parsed_data.get("visual_tags", ""),
+                "entities": parsed_data.get("entities", [])
+            }
+        except json.JSONDecodeError:
+            print(f"⚠️ JSON Parse Error. Raw: {raw_response}")
+            return {
+                "visual_tags": raw_response,
+                "entities": []
+            }
     except requests.exceptions.RequestException as e:
         print(f"⚠️ Ollama Connection Error: {e}")
         raise e
 
 @app.get("/generate-prompts/{chapter_id}")
-async def generate_prompts( 
+async def generate_prompts(
     chapter_id: int,
     session: Session = Depends(get_session)
-):
+):  
+    start=time.perf_counter()
     chapter = session.get(chapterContent, chapter_id)
-
     if not chapter:
         raise HTTPException(status_code=404, detail=f"Chapter ID {chapter_id} not found")
-    
     text = chapter.chapterDetail
     if not text or not text.strip():
         raise HTTPException(status_code=400, detail="Chapter content is empty")
     translator = Translator()
-    
-    print(f"✂️  Splitting text... (Limit: {CHUNK_SIZE_LIMIT})")
     chunks = smart_chunker(text, CHUNK_SIZE_LIMIT)
-    print(f"📦 Total Chunks: {len(chunks)}")
-    
+    print(f"Chunks: {len(chunks)}")
     final_results = []
-
     for index, chunk in enumerate(chunks):
-        print(f"--- Processing Chunk {index + 1}/{len(chunks)} ---")
-        
+        print(f"{index + 1}")
         chunk_result = {
             "chunk_id": index + 1,
+            "thai_text": chunk,
             "english_text": "",
+            "sd_prompt": "",
+            "entities": [],
             "error": None
         }
-        
         try:
             translation = await translator.translate(chunk, src='th', dest='en')
             english_text = translation.text
-            chunk_result["english_text"] = english_text
+            # chunk_result["english_text"] = english_text
+            ollama_data = call_ollama_via_http(english_text, extractModel)
             
-            print("🚀 Sending request to Ollama URL...")
-            sd_prompt = call_ollama_via_http(english_text, extractModel)
-            
-            chunk_result["sd_prompt"] = sd_prompt
-            
+            chunk_result["sd_prompt"] = ollama_data["visual_tags"]
+            chunk_result["entities"] = ollama_data["entities"]
             time.sleep(SLEEP_BETWEEN_CHUNKS)
-
         except Exception as e:
             print(f"❌ Error: {str(e)}")
             chunk_result["error"] = str(e)
             chunk_result["sd_prompt"] = "Error generating prompt"
-
         final_results.append(chunk_result)
-
+        print("Time: ", time.perf_counter() - start)
     return final_results
 
 # --------------------------------------------------------------
 
 import base64
-SD_API_URL = "http://127.0.0.1:7860/sdapi/v1/txt2img"
+import uuid
 
-SD_MODEL_CHECKPOINT = "juggernautXL_ragnarokBy.safetensors"
-
+MODEL_PATH = r"C:\stability matrix\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
 STORAGE_DIR = "storage/thumbnail"
+
 os.makedirs(STORAGE_DIR, exist_ok=True)
 
+# Global Variables
+pipe = None
+startup_error = None # เพิ่มตัวแปรเก็บ Error เพื่อแจ้ง User
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+@app.on_event("startup")
+def load_model_global():
+    """
+    โหลด Model ครั้งเดียวตอนเปิด Server (แก้ปัญหาช้า)
+    เลียนแบบ Logic จากโค้ดเก่าของคุณ
+    """
+    global pipe, MODEL_PATH, startup_error
+    
+    print(f"\n⚙️  Starting System on: {device}")
+    print(f"📂 Loading Model: {MODEL_PATH}")
+
+    try:
+        start_time = time.perf_counter()
+        
+        # 1. ตรวจสอบว่าเป็น SDXL หรือไม่ (ตาม Logic โค้ดเก่า)
+        is_xl = "xl" in MODEL_PATH.lower()
+        is_safetensors = MODEL_PATH.endswith(".safetensors")
+        
+        PipelineClass = StableDiffusionXLPipeline if is_xl else StableDiffusionPipeline
+        torch_dtype = torch.float16 if device == "cuda" else torch.float32
+
+        print(f"   Using Pipeline: {PipelineClass.__name__}")
+
+        # 2. โหลด Model (ใช้ diffusers หาไฟล์เอง ไม่ต้องใช้ os.path เช็คดักหน้า)
+        pipe = PipelineClass.from_single_file(
+            MODEL_PATH,
+            use_safetensors=is_safetensors,
+            torch_dtype=torch_dtype,
+            local_files_only=True # บังคับหาในเครื่องเท่านั้น
+        )
+        
+        # 3. ปิด Safety Checker & Watermark (ตามโค้ดเก่าเพื่อความเร็ว)
+        if hasattr(pipe, "safety_checker"):
+            pipe.safety_checker = None
+        if hasattr(pipe, "requires_safety_checker"):
+            pipe.requires_safety_checker = False
+        if hasattr(pipe, "watermarker"):
+            pipe.watermarker = None
+
+        # ย้ายไป GPU
+        pipe.to(device)
+        
+        # เพิ่มเติม: เปิด Memory Efficient Attention ถ้าใช้ xformers ได้
+        try:
+            pipe.enable_xformers_memory_efficient_attention()
+        except:
+            pass
+
+        print(f"✅ Model Loaded Successfully in {time.perf_counter() - start_time:.2f}s")
+        startup_error = None # เคลียร์ Error ถ้าโหลดสำเร็จ
+
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Error Loading Model: {error_msg}")
+        print("   (Server will start, but /generate will fail)")
+        # เก็บ Error ไว้บอก User ตอนเรียก API
+        startup_error = error_msg
+
+@app.get("/generate")
+def generate_image(prompt: str = "A futuristic city"):
+    print("a")
+    global pipe, startup_error
+    
+    
+    # ถ้า pipe ไม่มีค่า ให้เช็คว่าเกิด Error อะไรตอน Start แล้วส่งกลับไปบอก User
+    if pipe is None:
+        error_detail = "Model setup failed."
+        if startup_error:
+            error_detail += f" Reason: {startup_error}"
+            print("b")
+        else:
+            error_detail += " Check console logs for more info."
+            print("c")
+            
+        raise HTTPException(status_code=500, detail=error_detail)
+
+    start = time.perf_counter()
+    print(f"🎨 Generating: {prompt}")
+    
+    try:
+        negative_prompt = "blurry, low quality, distorted, text, watermark"
+
+        # ขนาดรูปตามโค้ดเก่าของคุณ (640x1280)
+        # หมายเหตุ: SDXL แนะนำ 1024x1024 แต่ถ้าคุณชอบ Ratio นี้ก็ตามนี้ครับ
+        image = pipe(
+            prompt=prompt, 
+            negative_prompt=negative_prompt, 
+            num_inference_steps=20,
+            height=1024, # ปรับเป็น 1024 เพื่อคุณภาพที่ดีที่สุดของ SDXL (หรือแก้กลับเป็น 640 ตามเดิมได้)
+            width=1024   # ปรับเป็น 1024 (หรือแก้กลับเป็น 1280 ตามเดิมได้)
+        ).images[0]
+        
+        filename = f"{uuid.uuid4()}.png"
+        file_path = os.path.join(STORAGE_DIR, filename)
+        
+        image.save(file_path)
+        
+        print(f"✅ Done in {time.perf_counter() - start:.3f}s -> {file_path}")
+        return FileResponse(file_path, media_type="image/png")
+
+    except Exception as e:
+        if "out of memory" in str(e).lower():
+            torch.cuda.empty_cache()
+            raise HTTPException(status_code=500, detail="GPU OOM")
+        raise HTTPException(status_code=500, detail=str(e))
+        
+# ---------------------------------------------------------------
+
+@app.get("/generate_image_internal")
 def generate_image_internal(prompt: str, output_filename: str):
     start = time.perf_counter()
     
