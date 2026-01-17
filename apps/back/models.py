@@ -9,6 +9,8 @@ class movieTitle(SQLModel, table=True):
     picPath: str = Field(default="")
     status: str = Field(default="ready")
     chapters: List["chapterContent"] = Relationship(back_populates="movie")
+    characters: List["character"] = Relationship(back_populates="movie")
+    entities: List["entity"] = Relationship(back_populates="movie")
 
 class chapterContent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -19,19 +21,38 @@ class chapterContent(SQLModel, table=True):
     picPath: str = Field(default="")      
     vdoPath: str = Field(default="")               
     movieId: Optional[int] = Field(default=None, foreign_key="movietitle.id")
-    is_processed: bool = Field(default=False)
+    isExtracted: bool = Field(default=False)
     movie: Optional[movieTitle] = Relationship(back_populates="chapters")
-    
-# class Entity(SQLModel, table=True):
-#     id: Optional[int] = Field(default=None, primary_key=True)
-#     type: str
-#     name: str
-#     visual_tags: str = Field(default="")
-#     movie_id: Optional[int] = Field(default=None, foreign_key="movietitle.id")
-#     refpath: str = Field(default="")
-#     chapter_found_id: Optional[int] = Field(default=None, foreign_key="chaptercontent.id")
 
-# class altEntityName(SQLModel, table=True):
-#     id: Optional[int] = Field(default=None, primary_key=True)
-#     altName: str[int] = Field(sa_column=Column("altName", Text))
-#     entity_id: Optional[int] = Field(default=None, foreign_key="entity.id")
+class entity(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    type: str 
+    name: str
+    visual_tags: str = Field(default="")
+    movieId: Optional[int] = Field(default=None, foreign_key="movietitle.id")
+    refpath: str = Field(default="")
+    movie: Optional[movieTitle] = Relationship(back_populates="entities")
+    altNames: List["altEntity"] = Relationship(back_populates="entity")
+
+class altEntity(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    altName: str = Field(sa_column=Column("altName", Text))
+    entityId: Optional[int] = Field(default=None, foreign_key="entity.id")
+    entity: Optional["entity"] = Relationship(back_populates="altNames")
+
+class character(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    type: str = Field(default="Character")
+    name: str
+    IdentityTags: str = Field(default="")
+    ModifierTags: str = Field(default="")
+    movieId: Optional[int] = Field(default=None, foreign_key="movietitle.id")
+    refpath: str = Field(default="")
+    movie: Optional[movieTitle] = Relationship(back_populates="characters")
+    altNames: List["altCharacter"] = Relationship(back_populates="character")
+
+class altCharacter(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    altName: str = Field(sa_column=Column("altName", Text))
+    entityId: Optional[int] = Field(default=None, foreign_key="character.id")
+    character: Optional["character"] = Relationship(back_populates="altNames")

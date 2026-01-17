@@ -5,8 +5,9 @@ from contextlib import asynccontextmanager
 from sqlmodel import Session, select
 from pydantic import BaseModel
 from typing import List
-import requests
 from fastapi.staticfiles import StaticFiles
+import asyncio
+import requests
 import json
 import os
 import time
@@ -17,9 +18,10 @@ from googletrans import Translator
 import torch
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 from pythainlp.tag import NER
+from services import save_extraction_result
 
 from database import create_db_and_tables, get_session
-from models import movieTitle, chapterContent
+from models import movieTitle, chapterContent, character, altCharacter, entity, altEntity
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -38,8 +40,7 @@ app.add_middleware(
 )
 
 ollamaURL = "http://localhost:11434/api/generate"
-extractModel = "scb10x/typhoon2.1-gemma3-12b:latest"
-extractModel2 = "gemma3:4b"
+extractModel = "gemma3:12b"
 transModel = "gemma3:4b"
 stabilityModel = "C:\stability matrix\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
 app.mount("/static", StaticFiles(directory="public"), name="static")
@@ -86,8 +87,6 @@ def clearThaiTypeing(text: str) -> str:
         fixed_text = fixed_text.replace(wrong_word, correct_word)    
     return fixed_text
 
-import re
-
 def clearNewline(text: str) -> str:
     def replacer(match):
         found = match.group()
@@ -98,6 +97,13 @@ def clearNewline(text: str) -> str:
         return ' '
     pattern = r"[ ]*\n[ \n]*"
     return re.sub(pattern, replacer, text).strip()
+
+def parse_tags_to_set(tags_input):
+    if not tags_input:
+        return set()
+    if isinstance(tags_input, str):
+        return set(t.strip() for t in tags_input.split(',') if t.strip())
+    return set()
 
 @app.get("/movies/", response_model=List[movieTitle])
 def get_movies(session: Session = Depends(get_session)):
@@ -238,6 +244,7 @@ def genPic(chapterId: int, session: Session = Depends(get_session)):
             raise HTTPException(status_code=500, detail=f"Error: no promt for "+chapterId)
             
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(device)
         torch_dtype = torch.float16 if device == "cuda" else torch.float32
         is_xl = "xl" in stabilityModel.lower()
         
@@ -385,107 +392,7 @@ def parse_tags_to_set(tag_input):
     tag_str = str(tag_input)
     return set(t.strip() for t in tag_str.split(",") if t.strip())
 
-@app.get("/extractEntities/{chapter_id}")
-async def extract_entities(chapter_id: int, session: Session = Depends(get_session)):
-    start = time.perf_counter()
-    chapter_obj = session.get(chapterContent, chapter_id)
-    if not chapter_obj or not chapter_obj.chapterDetail:
-        return {"result": "No content found."}
-    
-    chapterDetail = chapter_obj.chapterDetail
-    lines = chapterDetail.split('\n')
-    total_lines = len(lines)
-    
-    if total_lines < 10:
-        chunks = [chapterDetail]
-    else:
-        chunk_size = (total_lines + 9) // 10
-        overlap = 2
-        step = max(1, chunk_size - overlap)
-        chunks = []
-        for i in range(0, total_lines, step):
-            chunk_lines = lines[i:i + chunk_size]
-            chunk_text = "\n".join(chunk_lines)
-            chunks.append(chunk_text)
-            if i + chunk_size >= total_lines:
-                break
-            
-    results = []
-
-    async with httpx.AsyncClient(timeout=1800.0) as client:
-        for idx, chunk in enumerate(chunks):
-            print(f"{idx+1}")
-            res = await processChunk(chunk, client, extractModel) 
-            if res:
-                results.append(res)
-            else:
-                print(f"Chunk {idx+1} err")
-    merged_entities = {}
-    for res in results:
-        if not res or not res.get("entities"):
-            continue
-        for entity in res["entities"]:
-            e_type = entity.get("type")
-            name = entity.get("name")
-            if not e_type or not name:
-                continue   
-            e_type = e_type.strip().capitalize() 
-            name = name.strip()
-            key = (e_type, name)
-            current_alts_input = entity.get("altNames")
-            current_alts = set()
-            if current_alts_input:
-                if isinstance(current_alts_input, list):
-                    current_alts = set(str(a).strip() for a in current_alts_input if str(a).strip())
-                else:
-                    current_alts = set([str(current_alts_input).strip()])
-            if key not in merged_entities:
-                merged_entities[key] = {
-                    "type": e_type,
-                    "name": name,
-                    "altNames": set(),
-                    "VisualTags": set(),    
-                    "IdentityTags": set(),   
-                    "ModifierTags": set()   
-                }
-            merged_entities[key]["altNames"].update(current_alts)
-            if "Character" in e_type:
-                i_set = parse_tags_to_set(entity.get("IdentityTags"))
-                m_set = parse_tags_to_set(entity.get("ModifierTags"))
-                merged_entities[key]["IdentityTags"].update(i_set)
-                merged_entities[key]["ModifierTags"].update(m_set)
-            else:
-                v_set = parse_tags_to_set(entity.get("VisualTags"))
-                merged_entities[key]["VisualTags"].update(v_set)
-    final_output = {
-        "characters": [],
-        "locations": [],
-        "items": []
-    }
-    for key, data in merged_entities.items():
-        data["altNames"] = sorted(list(data["altNames"]))
-        e_type_lower = data["type"].lower()
-        if "character" in e_type_lower:
-            data["IdentityTags"] = ", ".join(sorted(list(data["IdentityTags"])))
-            data["ModifierTags"] = ", ".join(sorted(list(data["ModifierTags"])))
-            data.pop("VisualTags", None) 
-            final_output["characters"].append(data)
-        else:
-            data["VisualTags"] = ", ".join(sorted(list(data["VisualTags"])))
-            data.pop("IdentityTags", None)
-            data.pop("ModifierTags", None)
-            
-            if "location" in e_type_lower:
-                final_output["locations"].append(data)
-            else:
-                final_output["items"].append(data)
-    print(f"Time: {time.perf_counter() - start:.3f} seconds")
-    return final_output
-
-import re
-import json
-
-async def processChunk2(chunk_text: str, client: httpx.AsyncClient, extractModel: str):
+async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel: str):
     prompt = f"""
     Role:
     You are an AI Visual Director.
@@ -529,7 +436,7 @@ async def processChunk2(chunk_text: str, client: httpx.AsyncClient, extractModel
         "stream": False,
         "options": {
             "num_ctx": 4096, 
-            "temperature": 0.2  # ลดลงเพื่อให้แม่นยำเรื่อง Format
+            "temperature": 0.5  
         },
         "format": "json"
     }
@@ -538,15 +445,12 @@ async def processChunk2(chunk_text: str, client: httpx.AsyncClient, extractModel
         response = await client.post(ollamaURL, json=payload)
         response.raise_for_status()
         result_text = response.json().get("response", "")
-        
-        # ค้นหา JSON ด้วย Regex
         match = re.search(r'\{.*\}', result_text, re.DOTALL)
         if match:
             json_str = match.group(0)
             try:
                 return json.loads(json_str)
             except json.JSONDecodeError:
-                # ลองซ่อม JSON แบบง่าย (กรณีมี comma เกินท้ายสุด)
                 try:
                     corrected = re.sub(r',\s*([\]}])', r'\1', json_str)
                     return json.loads(corrected)
@@ -561,10 +465,8 @@ async def processChunk2(chunk_text: str, client: httpx.AsyncClient, extractModel
         print(f"Process Error: {e}")
         return None
 
-import asyncio
-
-@app.get("/extractEntities2/{chapter_id}")
-async def extract_entities2(chapter_id: int, session: Session = Depends(get_session)):
+@app.get("/extractEntities/{chapter_id}")
+async def extract_entities(chapter_id: int, session: Session = Depends(get_session)):
     start = time.perf_counter()
     chapter_obj = session.get(chapterContent, chapter_id)
     if not chapter_obj or not chapter_obj.chapterDetail:
@@ -574,18 +476,17 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
     lines = chapterDetail.split('\n')
     total_lines = len(lines)
     
-    LINES_PER_CHUNK = 15  
+    ################################# adjust ถ้าเวลาเหลือ
+    LINES_PER_CHUNK = 10  
     OVERLAP = 3          
     
     chunks = []
     if total_lines <= LINES_PER_CHUNK:
         chunks = [chapterDetail]
-    else:
-        # Loop ตัดทีละ step
+    else: 
         step = LINES_PER_CHUNK - OVERLAP
         for i in range(0, total_lines, step):
             chunk_lines = lines[i : i + LINES_PER_CHUNK]
-            # หยุดถ้า Chunk สั้นเกินไป (เหลือน้อยกว่า 3 บรรทัด) และไม่ใช่ Chunk แรก
             if len(chunk_lines) < 3 and len(chunks) > 0:
                 break
             chunk_text = "\n".join(chunk_lines)
@@ -596,12 +497,9 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
 
     async with httpx.AsyncClient(timeout=1800.0) as client:
         for idx, chunk in enumerate(chunks):
-            # แสดงความยาวเพื่อให้รู้ว่า Chunk เล็กลงจริงไหม
             print(f"Chunk {idx+1}/{len(chunks)} (Length: {len(chunk)} chars)")
-            
-            # Re-init Translator ทุกครั้ง
             translator = Translator()
-            await asyncio.sleep(2) # Delay สำคัญ
+            await asyncio.sleep(1) 
 
             text_to_process = chunk
             try:
@@ -611,13 +509,13 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
             except Exception as e:
                 print(f"Trans Warning Ch {idx+1}: {e}")
 
-            res = await processChunk2(text_to_process, client, extractModel2) 
+            res = await processChunk(text_to_process, client, extractModel) 
             if res:
                 results.append(res)
             else:
                 print(f"Chunk {idx+1} Failed")
+                # return res # Commented out: ปกติถ้า chunk หนึ่งล้มเหลว เราอาจจะอยากทำต่อ chunk อื่นให้จบครับ แต่ถ้าจะหยุดเลยก็ uncomment ได้
 
-    # --- ส่วน Merge ข้อมูล (เหมือนเดิม) ---
     merged_entities = {}
     for res in results:
         if not res or not res.get("entities"):
@@ -631,7 +529,6 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
             name = name.strip()
             key = (e_type, name)
             
-            # AltNames
             current_alts_input = entity.get("altNames")
             current_alts = set()
             if current_alts_input:
@@ -640,7 +537,6 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
                 else:
                     current_alts = set([str(current_alts_input).strip()])
             
-            # Init Dict if not exist
             if key not in merged_entities:
                 merged_entities[key] = {
                     "type": e_type,
@@ -651,7 +547,6 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
                     "ModifierTags": set()   
                 }
             
-            # Merge Data
             merged_entities[key]["altNames"].update(current_alts)
             if "Character" in e_type:
                 i_set = parse_tags_to_set(entity.get("IdentityTags"))
@@ -662,7 +557,6 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
                 v_set = parse_tags_to_set(entity.get("VisualTags"))
                 merged_entities[key]["VisualTags"].update(v_set)
 
-    # --- Final Formatting (เหมือนเดิม) ---
     final_output = {
         "characters": [],
         "locations": [],
@@ -686,7 +580,21 @@ async def extract_entities2(chapter_id: int, session: Session = Depends(get_sess
             else:
                 final_output["items"].append(data)
 
-    print(f"Total Time: {time.perf_counter() - start:.3f} seconds")
+    print(f"Extract Entities Time: {time.perf_counter() - start:.3f} seconds")
+
+    # ------------------------------------------------------------------
+    # SAVE TO DATABASE SECTION
+    # เรียกใช้ function save_extraction_result จาก services.py
+    # ------------------------------------------------------------------
+    try:
+        saved_status = save_extraction_result(session, chapter_id, final_output)
+        if saved_status:
+            print("✅ Data successfully saved/updated in Database.")
+        else:
+            print("⚠️ Failed to save data to Database.")
+    except Exception as e:
+        print(f"❌ Error saving to database: {e}")
+
     return final_output
 
 # -----------------------------------------------------------------
