@@ -1,3 +1,6 @@
 __pycache__
 .venv/*
 ~/*
+public/storage/characters/*
+public/storage/entities/*
+public/storage/thumbnail/*

@@ -11,6 +11,7 @@ import requests
 import json
 import os
 import time
+import gc
 import re
 import fitz 
 import httpx
@@ -42,7 +43,8 @@ app.add_middleware(
 ollamaURL = "http://localhost:11434/api/generate"
 extractModel = "gemma3:12b"
 transModel = "gemma3:4b"
-stabilityModel = "C:\stability matrix\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
+stabilityModel = "C:\\stability matrix\\Data\\Models\\StableDiffusion\\juggernautXL_ragnarokBy.safetensors"
+lora = r"C:\stability matrix\Data\Models\Lora\Wuxia-PONY-PAseer.safetensors"
 app.mount("/static", StaticFiles(directory="public"), name="static")
 
 class ChapterUpdate(BaseModel):
@@ -104,6 +106,154 @@ def parse_tags_to_set(tags_input):
     if isinstance(tags_input, str):
         return set(t.strip() for t in tags_input.split(',') if t.strip())
     return set()
+
+def load_image_pipe():
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    torch_dtype = torch.float16 if device == "cuda" else torch.float32
+    is_xl = "xl" in stabilityModel.lower()
+    is_safetensors = stabilityModel.endswith(".safetensors")
+    PipelineClass = StableDiffusionXLPipeline if is_xl else StableDiffusionPipeline
+    
+    if is_safetensors:
+            pipe = PipelineClass.from_single_file(
+            stabilityModel,
+            use_safetensors=True,
+            torch_dtype=torch_dtype
+        )
+    else:
+        pipe = PipelineClass.from_pretrained(
+            stabilityModel,
+            torch_dtype=torch_dtype,
+            use_safetensors=True
+        )
+
+    if hasattr(pipe, "safety_checker"):
+        pipe.safety_checker = None
+    if hasattr(pipe, "requires_safety_checker"):
+        pipe.requires_safety_checker = False
+    if hasattr(pipe, "watermarker"):
+        pipe.watermarker = None
+        
+    pipe.to(device)    
+    if os.path.exists(lora):
+        try:
+            pipe.load_lora_weights(lora)
+            print("lora worked")
+            print("lora worked")
+            print("lora worked")
+            print("lora worked")
+        except Exception as e:
+            print(f"❌ Error loading LoRA: {e}")
+    else:
+        print(f"⚠️ LoRA file not found at: {lora}")
+
+    return pipe
+
+def generate_images_for_missing_refpaths(session: Session, movie_id: int):
+    print(f"🎨 Starting Image Generation for Movie ID: {movie_id}")
+    
+    # 1. Fetch Characters with empty refpath
+    char_statement = select(character).where(
+        character.movieId == movie_id,
+        (character.refpath == "") | (character.refpath == None)
+    )
+    chars_to_gen = session.exec(char_statement).all()
+
+    # 2. Fetch Entities (Locations/Items) with empty refpath
+    ent_statement = select(entity).where(
+        entity.movieId == movie_id,
+        (entity.refpath == "") | (entity.refpath == None)
+    )
+    ents_to_gen = session.exec(ent_statement).all()
+
+    if not chars_to_gen and not ents_to_gen:
+        print("✨ No missing images found.")
+        return
+
+    # Load Pipeline (Local scope)
+    pipeline = None
+    try:
+        pipeline = load_image_pipe()
+    except Exception as e:
+        print(f"❌ Failed to load Image Pipeline: {e}")
+        return
+
+    # Create directories if not exist
+    os.makedirs("public/storage/characters", exist_ok=True)
+    os.makedirs("public/storage/entities", exist_ok=True)
+
+    try:
+        # --- Generate Characters ---
+        for char_obj in chars_to_gen:
+            try:
+                desc = f"{char_obj.IdentityTags}, {char_obj.ModifierTags}"
+                prompt = f"ancient chinese style, {desc}, front view, head and shoulders portrait, looking directly at camera, passport photo style, neutral expression, soft studio lighting, evenly lit face, no shadows on face, bright, high quality, sharp focus, simple white background"
+                negative_prompt = "shadows, harsh lighting, cinematic lighting, hands, hands on face, distorted face, profile view, looking away, busy background, blurry, low quality, nsfw"
+                
+                print(f"Generating Character: {char_obj.name}...")
+                image = pipeline(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    num_inference_steps=25,
+                    height=1024, 
+                    width=1024,
+                    guidance_scale=7.0
+                ).images[0]
+                
+                # บันทึกเป็น storage/characters/{id}.png
+                filename = f"storage/characters/{char_obj.id}.png"
+                image.save(f"public/{filename}")
+                
+                # Save path ลง DB
+                char_obj.refpath = filename
+                session.add(char_obj)
+                session.commit() 
+            except Exception as e:
+                print(f"❌ Error generating character {char_obj.name}: {e}")
+
+        # --- Generate Entities (Items/Locations) ---
+        for ent_obj in ents_to_gen:
+            try:
+                desc = ent_obj.visual_tags
+                e_type_lower = ent_obj.type.lower()
+                
+                if "item" in e_type_lower:
+                    prompt = f"ancient chinese style object, {desc}, product photography, centered shot, isolated on white background, studio lighting, soft shadows, high detail, 8k, sharp focus, realistic texture, professional lighting"
+                    negative_prompt = "human, hands, holding, fingers, person, messy background, text, watermark, blurry, low quality, distortion, nsfw, cropped, out of frame"
+                else: # Location
+                    prompt = f"ancient chinese architecture, {desc}, establishing shot, wide angle view, highly detailed, realistic, 8k, cinematic lighting, depth of field, interior design, atmosphere, sharp focus"
+                    negative_prompt = "people, crowd, humans, animals, text, watermark, blurry, low quality, distortion, simple background, white background, flat lighting"
+
+                print(f"Generating Entity ({ent_obj.type}): {ent_obj.name}...")
+                image = pipeline(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    num_inference_steps=25,
+                    height=1024, 
+                    width=1024,
+                    guidance_scale=7.0
+                ).images[0]
+                
+                # บันทึกเป็น storage/entities/{id}.png
+                filename = f"storage/entities/{ent_obj.id}.png"
+                image.save(f"public/{filename}")
+                
+                # Save path ลง DB
+                ent_obj.refpath = filename
+                session.add(ent_obj)
+                session.commit()
+            except Exception as e:
+                print(f"❌ Error generating entity {ent_obj.name}: {e}")
+                
+    finally:
+        # Cleanup memory
+        print("🧹 Cleaning up model from memory...")
+        if pipeline:
+            del pipeline
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        print("✅ RAM Freed.")
 
 @app.get("/movies/", response_model=List[movieTitle])
 def get_movies(session: Session = Depends(get_session)):
@@ -472,11 +622,12 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
     if not chapter_obj or not chapter_obj.chapterDetail:
         return {"result": "No content found."}
     
+    current_movie_id = chapter_obj.movieId
+    
     chapterDetail = chapter_obj.chapterDetail
     lines = chapterDetail.split('\n')
     total_lines = len(lines)
     
-    ################################# adjust ถ้าเวลาเหลือ
     LINES_PER_CHUNK = 10  
     OVERLAP = 3          
     
@@ -514,22 +665,21 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                 results.append(res)
             else:
                 print(f"Chunk {idx+1} Failed")
-                # return res # Commented out: ปกติถ้า chunk หนึ่งล้มเหลว เราอาจจะอยากทำต่อ chunk อื่นให้จบครับ แต่ถ้าจะหยุดเลยก็ uncomment ได้
 
     merged_entities = {}
     for res in results:
         if not res or not res.get("entities"):
             continue
-        for entity in res["entities"]:
-            e_type = entity.get("type")
-            name = entity.get("name")
+        for entity_item in res["entities"]:
+            e_type = entity_item.get("type")
+            name = entity_item.get("name")
             if not e_type or not name:
                 continue   
             e_type = e_type.strip().capitalize() 
             name = name.strip()
             key = (e_type, name)
             
-            current_alts_input = entity.get("altNames")
+            current_alts_input = entity_item.get("altNames")
             current_alts = set()
             if current_alts_input:
                 if isinstance(current_alts_input, list):
@@ -549,12 +699,12 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
             
             merged_entities[key]["altNames"].update(current_alts)
             if "Character" in e_type:
-                i_set = parse_tags_to_set(entity.get("IdentityTags"))
-                m_set = parse_tags_to_set(entity.get("ModifierTags"))
+                i_set = parse_tags_to_set(entity_item.get("IdentityTags"))
+                m_set = parse_tags_to_set(entity_item.get("ModifierTags"))
                 merged_entities[key]["IdentityTags"].update(i_set)
                 merged_entities[key]["ModifierTags"].update(m_set)
             else:
-                v_set = parse_tags_to_set(entity.get("VisualTags"))
+                v_set = parse_tags_to_set(entity_item.get("VisualTags"))
                 merged_entities[key]["VisualTags"].update(v_set)
 
     final_output = {
@@ -582,10 +732,7 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
 
     print(f"Extract Entities Time: {time.perf_counter() - start:.3f} seconds")
 
-    # ------------------------------------------------------------------
-    # SAVE TO DATABASE SECTION
-    # เรียกใช้ function save_extraction_result จาก services.py
-    # ------------------------------------------------------------------
+    # Save to Database
     try:
         saved_status = save_extraction_result(session, chapter_id, final_output)
         if saved_status:
@@ -594,6 +741,17 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
             print("⚠️ Failed to save data to Database.")
     except Exception as e:
         print(f"❌ Error saving to database: {e}")
+
+    # ------------------------------------------------------------------
+    # POST-PROCESSING: Generate Images for Missing Refpaths
+    # ------------------------------------------------------------------
+    if current_movie_id:
+        print("💤 Sleeping 1 sec before image generation...")
+        await asyncio.sleep(1)
+        try:
+            generate_images_for_missing_refpaths(session, current_movie_id)
+        except Exception as e:
+            print(f"❌ Error during image generation: {e}")
 
     return final_output
 
@@ -849,58 +1007,58 @@ def generate_image(prompt: str = "A futuristic city"):
         
 # ---------------------------------------------------------------
 
-@app.get("/generate_image_internal")
-def generate_image_internal(prompt: str, output_filename: str):
-    start = time.perf_counter()
+# @app.get("/generate_image_internal")
+# def generate_image_internal(prompt: str, output_filename: str):
+#     start = time.perf_counter()
     
-    payload = {
-        "prompt": prompt,
-        "negative_prompt": "blurry, low quality, distorted, text, watermark, bad anatomy, bad hands, lowres, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, username",
-        "steps": 25,               
-        "sampler_name": "Euler a", 
-        "width": 1024,            
-        "height": 1024,
-        "cfg_scale": 7,            
-        "batch_size": 1,
+#     payload = {
+#         "prompt": prompt,
+#         "negative_prompt": "blurry, low quality, distorted, text, watermark, bad anatomy, bad hands, lowres, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, username",
+#         "steps": 20,               
+#         "sampler_name": "Euler a", 
+#         "width": 1024,            
+#         "height": 1024,
+#         "cfg_scale": 7,            
+#         "batch_size": 1,
         
-        # [NEW] บังคับให้ WebUI สลับไปใช้ Model นี้
-        "override_settings": {
-            "sd_model_checkpoint": SD_MODEL_CHECKPOINT
-        },
-        "override_settings_restore_afterwards": False # True=ใช้เสร็จกลับเป็นตัวเดิม, False=เปลี่ยนแล้วเปลี่ยนเลย
-    }
+#         # [NEW] บังคับให้ WebUI สลับไปใช้ Model นี้
+#         "override_settings": {
+#             "sd_model_checkpoint": SD_MODEL_CHECKPOINT
+#         },
+#         "override_settings_restore_afterwards": False # True=ใช้เสร็จกลับเป็นตัวเดิม, False=เปลี่ยนแล้วเปลี่ยนเลย
+#     }
 
-    try:
-        # 1. ยิง API Request
-        response = requests.post(SD_API_URL, json=payload, timeout=120) # timeout เผื่อเครื่องช้า
+#     try:
+#         # 1. ยิง API Request
+#         response = requests.post(SD_API_URL, json=payload, timeout=600) # timeout เผื่อเครื่องช้า
         
-        if response.status_code == 200:
-            r = response.json()
+#         if response.status_code == 200:
+#             r = response.json()
             
-            # API จะส่งรูปกลับมาเป็น Base64 String ใน r['images'][0]
-            image_b64 = r['images'][0]
+#             # API จะส่งรูปกลับมาเป็น Base64 String ใน r['images'][0]
+#             image_b64 = r['images'][0]
             
-            # 2. แปลง Base64 กลับเป็นไฟล์รูปภาพ
-            save_path = os.path.join(STORAGE_DIR, output_filename)
+#             # 2. แปลง Base64 กลับเป็นไฟล์รูปภาพ
+#             save_path = os.path.join(STORAGE_DIR, output_filename)
             
-            with open(save_path, "wb") as f:
-                f.write(base64.b64decode(image_b64))
+#             with open(save_path, "wb") as f:
+#                 f.write(base64.b64decode(image_b64))
             
-            duration = time.perf_counter() - start
-            print(f"✅ Generated & Saved to {save_path} in {duration:.2f}s")
-            return save_path
+#             duration = time.perf_counter() - start
+#             print(f"✅ Generated & Saved to {save_path} in {duration:.2f}s")
+#             return save_path
             
-        else:
-            print(f"❌ SD API Error: {response.status_code} - {response.text}")
-            raise Exception(f"SD API Error: {response.status_code}")
+#         else:
+#             print(f"❌ SD API Error: {response.status_code} - {response.text}")
+#             raise Exception(f"SD API Error: {response.status_code}")
 
-    except requests.exceptions.ConnectionError:
-        print("❌ Connection Refused: ตรวจสอบว่า Stability Matrix เปิดอยู่และใส่ --api แล้วหรือยัง")
-        raise Exception("Cannot connect to Stability Matrix (Is it running?)")
+#     except requests.exceptions.ConnectionError:
+#         print("❌ Connection Refused: ตรวจสอบว่า Stability Matrix เปิดอยู่และใส่ --api แล้วหรือยัง")
+#         raise Exception("Cannot connect to Stability Matrix (Is it running?)")
         
-    except Exception as e:
-        print(f"❌ Gen Image Error: {e}")
-        raise e
+#     except Exception as e:
+#         print(f"❌ Gen Image Error: {e}")
+#         raise e
     
 @app.get("/")
 def root():

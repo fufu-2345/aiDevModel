@@ -12,6 +12,4 @@ transformers
 accelerate
 googletrans
 pymupdf>=1.23.9
-langchain
-langchain-community
-faiss-cpu
+peft

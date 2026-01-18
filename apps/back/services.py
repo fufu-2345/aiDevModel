@@ -1,4 +1,5 @@
 from sqlmodel import Session, select
+# แก้ไข import ให้ถูกต้อง: charecter -> character
 from models import movieTitle, chapterContent, character, altCharacter, entity, altEntity
 
 def merge_tags(old_tags: str, new_tags: str) -> str:
@@ -42,7 +43,7 @@ def save_extraction_result(session: Session, chapter_id: int, data: dict):
             session.add(existing_char)
             target_char_id = existing_char.id
         else:
-            # INSERT (ใช้ movieId)
+            # INSERT
             new_char = character(
                 name=name,
                 type="Character",
@@ -55,6 +56,7 @@ def save_extraction_result(session: Session, chapter_id: int, data: dict):
             session.refresh(new_char)
             target_char_id = new_char.id
 
+        # Process AltNames for Character
         if "altNames" in char_data:
             for alt in char_data["altNames"]:
                 # ใช้ entityId
@@ -64,22 +66,31 @@ def save_extraction_result(session: Session, chapter_id: int, data: dict):
                 )
                 if not session.exec(alt_stmt).first():
                     session.add(altCharacter(altName=alt, entityId=target_char_id))
+
+    # ---------------------------------------------------------
+    # PART 2: Process Locations & Items (Mapped to 'entity' table)
+    # ---------------------------------------------------------
     all_general_entities = data.get("locations", []) + data.get("items", [])
 
     for ent_data in all_general_entities:
         name = ent_data["name"]
         e_type = ent_data["type"]
+        
+        # ใช้ movieId
         statement = select(entity).where(
             entity.name == name,
             entity.type == e_type,
             entity.movieId == current_movie_id
         )
         existing_ent = session.exec(statement).first()
+
         if existing_ent:
+            # UPDATE
             existing_ent.visual_tags = merge_tags(existing_ent.visual_tags, ent_data.get("VisualTags", ""))
             session.add(existing_ent)
             target_ent_id = existing_ent.id
         else:
+            # INSERT
             new_ent = entity(
                 name=name,
                 type=e_type,
@@ -90,6 +101,8 @@ def save_extraction_result(session: Session, chapter_id: int, data: dict):
             session.commit()
             session.refresh(new_ent)
             target_ent_id = new_ent.id
+
+        # Process AltNames for Entity
         if "altNames" in ent_data:
             for alt in ent_data["altNames"]:
                 # ใช้ entityId
@@ -99,6 +112,10 @@ def save_extraction_result(session: Session, chapter_id: int, data: dict):
                 )
                 if not session.exec(alt_stmt).first():
                     session.add(altEntity(altName=alt, entityId=target_ent_id))
+    
+    # ---------------------------------------------------------
+    # PART 3: Update Chapter Status
+    # ---------------------------------------------------------
     chapter.isExtracted = True
     session.add(chapter)
 
