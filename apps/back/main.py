@@ -135,18 +135,7 @@ def load_image_pipe():
         pipe.watermarker = None
         
     pipe.to(device)    
-    if os.path.exists(lora):
-        try:
-            pipe.load_lora_weights(lora)
-            print("lora worked")
-            print("lora worked")
-            print("lora worked")
-            print("lora worked")
-        except Exception as e:
-            print(f"❌ Error loading LoRA: {e}")
-    else:
-        print(f"⚠️ LoRA file not found at: {lora}")
-
+    pipe.load_lora_weights(lora)
     return pipe
 
 def generate_images_for_missing_refpaths(session: Session, movie_id: int):
@@ -170,48 +159,42 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
         print("✨ No missing images found.")
         return
 
-    # Load Pipeline (Local scope)
     pipeline = None
     try:
         pipeline = load_image_pipe()
     except Exception as e:
         print(f"❌ Failed to load Image Pipeline: {e}")
         return
-
-    # Create directories if not exist
+    
     os.makedirs("public/storage/characters", exist_ok=True)
     os.makedirs("public/storage/entities", exist_ok=True)
 
     try:
-        # --- Generate Characters ---
         for char_obj in chars_to_gen:
             try:
                 desc = f"{char_obj.IdentityTags}, {char_obj.ModifierTags}"
-                prompt = f"ancient chinese style, {desc}, front view, head and shoulders portrait, looking directly at camera, passport photo style, neutral expression, soft studio lighting, evenly lit face, no shadows on face, bright, high quality, sharp focus, simple white background"
-                negative_prompt = "shadows, harsh lighting, cinematic lighting, hands, hands on face, distorted face, profile view, looking away, busy background, blurry, low quality, nsfw"
+                prompt = f"ancient chinese style, {desc}, front view, full body shot:1.3, looking directly at camera, neutral expression, soft studio lighting, no shadows on face, high quality, simple white background"
+                negative_prompt = "shadows, harsh lighting, cropped, cinematic lighting, hands on face, distorted face, profile view, looking away, busy background, blurry, low quality, nsfw"
                 
                 print(f"Generating Character: {char_obj.name}...")
                 image = pipeline(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
-                    num_inference_steps=25,
-                    height=1024, 
-                    width=1024,
+                    num_inference_steps=20,
+                    height=832, 
+                    width=1216,
                     guidance_scale=7.0
                 ).images[0]
                 
-                # บันทึกเป็น storage/characters/{id}.png
                 filename = f"storage/characters/{char_obj.id}.png"
                 image.save(f"public/{filename}")
                 
-                # Save path ลง DB
                 char_obj.refpath = filename
                 session.add(char_obj)
                 session.commit() 
             except Exception as e:
                 print(f"❌ Error generating character {char_obj.name}: {e}")
 
-        # --- Generate Entities (Items/Locations) ---
         for ent_obj in ents_to_gen:
             try:
                 desc = ent_obj.visual_tags
