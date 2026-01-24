@@ -447,74 +447,74 @@ def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
     
 # ----------------------------------------------- Entity
 
-async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel: str):
-    prompt = f"""
-    Role:
-    คุณคือ AI Visual Director ผู้เชี่ยวชาญด้านการถอดรหัสภาพจากนิยายเพื่อนำไปสร้างภาพประกอบ
+# async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel: str):
+#     prompt = f"""
+#     Role:
+#     คุณคือ AI Visual Director ผู้เชี่ยวชาญด้านการถอดรหัสภาพจากนิยายเพื่อนำไปสร้างภาพประกอบ
 
-    Task:
-    อ่านข้อความ Input Text แล้วสกัดข้อมูล Entity (Character, Location, Item) ออกมาเป็น JSON
+#     Task:
+#     อ่านข้อความ Input Text แล้วสกัดข้อมูล Entity (Character, Location, Item) ออกมาเป็น JSON
 
-    ต้องแยกคุณลักษณะออกเป็น 2 ส่วนให้ชัดเจน:
-    1. "IdentityTags": ลักษณะทางกายภาพที่ติดตัว เปลี่ยนแปลงยาก (เช่น สีผม, สีตา, ทรงผมหลัก, สีผิว, เพศ, รูปร่าง, อายุ, เผ่าพันธุ์)
-    2. "ModifierTags": สิ่งที่เปลี่ยนแปลงได้ตามสถานการณ์ (เช่น เสื้อผ้า, เครื่องประดับ, คราบเลือด, รอยเปื้อน, อารมณ์, ท่าทาง)
-    **Important Rule:** หากมีหลายรูปลักษณ์ ให้ยึด "รูปลักษณ์แรก" ที่ปรากฏ
+#     ต้องแยกคุณลักษณะออกเป็น 2 ส่วนให้ชัดเจน:
+#     1. "IdentityTags": ลักษณะทางกายภาพที่ติดตัว เปลี่ยนแปลงยาก (เช่น สีผม, สีตา, ทรงผมหลัก, สีผิว, เพศ, รูปร่าง, อายุ, เผ่าพันธุ์)
+#     2. "ModifierTags": สิ่งที่เปลี่ยนแปลงได้ตามสถานการณ์ (เช่น เสื้อผ้า, เครื่องประดับ, คราบเลือด, รอยเปื้อน, อารมณ์, ท่าทาง)
+#     **Important Rule:** หากมีหลายรูปลักษณ์ ให้ยึด "รูปลักษณ์แรก" ที่ปรากฏ
 
-    Requirements:
-    - Name: ชื่อหลักที่เป็นทางการ ภาษาไทย
-    - AltNames: ชื่อเล่น หรือฉายา ภาษาไทย (ถ้ามี)
-    - Visual Tags: ขอเฉพาะคำนามหรือคำคุณศัพท์ที่ระบุรูปลักษณ์ (เช่น ผมแดง, ชุดเกราะ, เก่าแก่) ห้ามใส่คำกิริยาหรือการกระทำ (เช่น เดิน, กิน, พูด, ต่อสู้) คั่นด้วยคอมมา 
+#     Requirements:
+#     - Name: ชื่อหลักที่เป็นทางการ ภาษาไทย
+#     - AltNames: ชื่อเล่น หรือฉายา ภาษาไทย (ถ้ามี)
+#     - Visual Tags: ขอเฉพาะคำนามหรือคำคุณศัพท์ที่ระบุรูปลักษณ์ (เช่น ผมแดง, ชุดเกราะ, เก่าแก่) ห้ามใส่คำกิริยาหรือการกระทำ (เช่น เดิน, กิน, พูด, ต่อสู้) คั่นด้วยคอมมา 
     
-    Output Format (JSON Only):
-    {{
-        "entities": [
-            {{
-                "type": "Character", 
-                "name": "ชื่อตัวละคร",
-                "altNames": ["ชื่อเรียกอื่น"],
-                "IdentityTags": "tag1, tag2", 
-                "ModifierTags": "tag1, tag2"
-            }},
-            {{
-                "type": "Location",
-                "name": "ชื่อสถานที่",
-                "altNames": [],
-                "VisualTags": "tag1, tag2"
-            }},
-            {{
-                "type": "Item",
-                "name": "ชื่อวัตถุ",
-                "altNames": [],
-                "VisualTags": "tag1, tag2"
-            }}
-        ]
-    }}
+#     Output Format (JSON Only):
+#     {{
+#         "entities": [
+#             {{
+#                 "type": "Character", 
+#                 "name": "ชื่อตัวละคร",
+#                 "altNames": ["ชื่อเรียกอื่น"],
+#                 "IdentityTags": "tag1, tag2", 
+#                 "ModifierTags": "tag1, tag2"
+#             }},
+#             {{
+#                 "type": "Location",
+#                 "name": "ชื่อสถานที่",
+#                 "altNames": [],
+#                 "VisualTags": "tag1, tag2"
+#             }},
+#             {{
+#                 "type": "Item",
+#                 "name": "ชื่อวัตถุ",
+#                 "altNames": [],
+#                 "VisualTags": "tag1, tag2"
+#             }}
+#         ]
+#     }}
 
-    Input Text:
-    {chunk_text}
-    """
+#     Input Text:
+#     {chunk_text}
+#     """
 
-    payload = {
-        "model": extractModel,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "num_ctx": 4096, 
-            "temperature": 0.75
-        },
-        "format": "json"
-    }
+#     payload = {
+#         "model": extractModel,
+#         "prompt": prompt,
+#         "stream": False,
+#         "options": {
+#             "num_ctx": 4096, 
+#             "temperature": 0.75
+#         },
+#         "format": "json"
+#     }
 
-    print(len(prompt))
-    try:
-        response = await client.post(ollamaURL, json=payload)
-        response.raise_for_status()
-        result_text = response.json().get("response", "")
+#     print(len(prompt))
+#     try:
+#         response = await client.post(ollamaURL, json=payload)
+#         response.raise_for_status()
+#         result_text = response.json().get("response", "")
         
-        cleaned_text = result_text.replace("```json", "").replace("```", "").strip()
-        return json.loads(cleaned_text)
-    except Exception as e:
-        return None
+#         cleaned_text = result_text.replace("```json", "").replace("```", "").strip()
+#         return json.loads(cleaned_text)
+#     except Exception as e:
+#         return None
 
 def parse_tags_to_set(tag_input):
     if not tag_input:
@@ -824,6 +824,181 @@ def call_ollama_via_http(prompt_text: str, model: str) -> str:
         print(f"⚠️ Ollama Connection Error: {e}")
         raise e
 
+from transformers import pipeline
+@app.get("/extractEntities2/{chapter_id}")
+async def extract_entities_2(chapter_id: int, session: Session = Depends(get_session)):
+    start = time.perf_counter()
+    
+    # ดึงข้อมูล Chapter
+    chapter_obj = session.get(chapterContent, chapter_id)
+    if not chapter_obj or not chapter_obj.chapterDetail:
+        return {"result": "No content found."}
+    
+    chapterDetail = chapter_obj.chapterDetail
+    
+    # ---------------------------------------------------------
+    # PART 1: LOAD TRANSLATION MODEL LOCALLY (ภายใน Function)
+    # ---------------------------------------------------------
+    print("⏳ Loading Translation Model (TH -> EN)...")
+    try:
+        # ใช้ asyncio.to_thread เพราะการโหลด Model เป็น Blocking I/O
+        # Model ที่แนะนำ: Helsinki-NLP/opus-mt-th-en (เล็กและเร็ว)
+        translator_pipe = await asyncio.to_thread(
+            pipeline, 
+            "translation", 
+            model="Helsinki-NLP/opus-mt-th-en"
+        )
+        print("✅ Model Loaded.")
+    except Exception as e:
+        print(f"❌ Failed to load model: {e}")
+        return {"error": "Translation model failed to load"}
+
+    # ---------------------------------------------------------
+    # PART 2: PREPARE CHUNKS
+    # ---------------------------------------------------------
+    lines = chapterDetail.split('\n')
+    total_lines = len(lines)
+    
+    LINES_PER_CHUNK = 10  
+    OVERLAP = 3          
+    
+    chunks = []
+    if total_lines <= LINES_PER_CHUNK:
+        chunks = [chapterDetail]
+    else: 
+        step = LINES_PER_CHUNK - OVERLAP
+        for i in range(0, total_lines, step):
+            chunk_lines = lines[i : i + LINES_PER_CHUNK]
+            if len(chunk_lines) < 3 and len(chunks) > 0:
+                break
+            chunk_text = "\n".join(chunk_lines)
+            chunks.append(chunk_text)
+
+    # ---------------------------------------------------------
+    # PART 3: PROCESS LOOP
+    # ---------------------------------------------------------
+    results = []
+    extractModel = "llama3" # หรือ model ที่คุณใช้
+    ollamaURL = "http://localhost:11434/api/generate" # URL ของ Ollama
+
+    async with httpx.AsyncClient(timeout=1800.0) as client:
+        for idx, chunk in enumerate(chunks):
+            print(f"Processing Chunk {idx+1}/{len(chunks)} (Len: {len(chunk)})")
+            
+            # --- Translation Phase (Local Pipe) ---
+            text_to_process = chunk
+            try:
+                # รัน Pipeline ใน Thread แยก เพื่อไม่ให้ Server ค้าง
+                translated_output = await asyncio.to_thread(translator_pipe, chunk)
+                # Pipeline return เป็น list ของ dict: [{'translation_text': '...'}]
+                if translated_output and isinstance(translated_output, list):
+                    text_to_process = translated_output[0].get('translation_text', chunk)
+            except Exception as e:
+                print(f"⚠️ Translation Warning Ch {idx+1}: {e}")
+                # ถ้าแปลไม่ได้ ให้ใช้ text เดิม (ภาษาไทย) ส่งไปเสี่ยงดวง
+
+            # --- Extraction Phase (Ollama) ---
+            res = await processChunk(text_to_process, client, extractModel, ollamaURL) 
+            if res:
+                results.append(res)
+            else:
+                print(f"Chunk {idx+1} Failed to extract JSON")
+
+    # ---------------------------------------------------------
+    # PART 4: MERGE LOGIC
+    # ---------------------------------------------------------
+    merged_entities = {}
+    for res in results:
+        if not res or not res.get("entities"):
+            continue
+        for entity_item in res["entities"]:
+            e_type = entity_item.get("type")
+            name = entity_item.get("name")
+            
+            if not e_type or not name:
+                continue   
+            
+            e_type = e_type.strip().capitalize() 
+            name = name.strip()
+            # ใช้ Tuple (Type, Name) เป็น Key เพื่อป้องกันชื่อซ้ำแต่คนละประเภท
+            key = (e_type, name)
+            
+            # Handle AltNames
+            current_alts_input = entity_item.get("altNames")
+            current_alts = set()
+            if current_alts_input:
+                if isinstance(current_alts_input, list):
+                    current_alts = set(str(a).strip() for a in current_alts_input if str(a).strip())
+                else:
+                    current_alts = set([str(current_alts_input).strip()])
+            
+            # Init Dict structure if new
+            if key not in merged_entities:
+                merged_entities[key] = {
+                    "type": e_type,
+                    "name": name,
+                    "altNames": set(),
+                    "VisualTags": set(),    
+                    "IdentityTags": set(),   
+                    "ModifierTags": set()   
+                }
+            
+            # Update data
+            merged_entities[key]["altNames"].update(current_alts)
+            
+            if "Character" in e_type:
+                i_set = parse_tags_to_set(entity_item.get("IdentityTags"))
+                m_set = parse_tags_to_set(entity_item.get("ModifierTags"))
+                merged_entities[key]["IdentityTags"].update(i_set)
+                merged_entities[key]["ModifierTags"].update(m_set)
+            else:
+                v_set = parse_tags_to_set(entity_item.get("VisualTags"))
+                merged_entities[key]["VisualTags"].update(v_set)
+
+    # ---------------------------------------------------------
+    # PART 5: FORMAT OUTPUT & SAVE
+    # ---------------------------------------------------------
+    final_output = {
+        "characters": [],
+        "locations": [],
+        "items": []
+    }
+    
+    for key, data in merged_entities.items():
+        # Convert Sets back to Lists/Strings for JSON
+        data["altNames"] = sorted(list(data["altNames"]))
+        e_type_lower = data["type"].lower()
+        
+        if "character" in e_type_lower:
+            data["IdentityTags"] = ", ".join(sorted(list(data["IdentityTags"])))
+            data["ModifierTags"] = ", ".join(sorted(list(data["ModifierTags"])))
+            data.pop("VisualTags", None) 
+            final_output["characters"].append(data)
+        else:
+            data["VisualTags"] = ", ".join(sorted(list(data["VisualTags"])))
+            data.pop("IdentityTags", None)
+            data.pop("ModifierTags", None)
+            
+            if "location" in e_type_lower:
+                final_output["locations"].append(data)
+            else:
+                final_output["items"].append(data)
+
+    elapsed = time.perf_counter() - start
+    print(f"Extract Entities 2 Finished in: {elapsed:.3f} seconds")
+
+    # Save to Database
+    try:
+        saved_status = save_extraction_result(session, chapter_id, final_output)
+        if saved_status:
+            print("✅ Data successfully saved/updated in Database.")
+        else:
+            print("⚠️ Failed to save data to Database.")
+    except Exception as e:
+        print(f"❌ Error saving to database: {e}")
+        
+    return final_output
+
 @app.get("/generate-prompts/{chapter_id}")
 async def generate_prompts(
     chapter_id: int,
@@ -945,8 +1120,6 @@ def generate_image(prompt: str = "A futuristic city"):
     print("a")
     global pipe, startup_error
     
-    
-    # ถ้า pipe ไม่มีค่า ให้เช็คว่าเกิด Error อะไรตอน Start แล้วส่งกลับไปบอก User
     if pipe is None:
         error_detail = "Model setup failed."
         if startup_error:
