@@ -24,6 +24,13 @@ class chapterContent(SQLModel, table=True):
     isExtracted: bool = Field(default=False)
     movie: Optional[movieTitle] = Relationship(back_populates="chapters")
 
+class chunkContent(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    chunkNumber: int 
+    chunkDetail: str = Field(default="")   
+    picRef: str = Field(default="")
+    chapterId: Optional[int] = Field(default=None, foreign_key="chaptercontent.id")
+
 class entity(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     type: str 

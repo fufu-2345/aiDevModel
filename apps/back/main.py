@@ -44,6 +44,7 @@ ollamaURL = "http://localhost:11434/api/generate"
 extractModel = "gemma3:12b"
 transModel = "gemma3:4b"
 stabilityModel = "C:\\stability matrix\\Data\\Models\\StableDiffusion\\juggernautXL_ragnarokBy.safetensors"
+stabilityModel2 ="C:\\stability matrix\\Data\\Models\\StableDiffusion\\revAnimated_v2Rebirth.safetensors"
 lora = r"C:\stability matrix\Data\Models\Lora\Wuxia-PONY-PAseer.safetensors"
 app.mount("/static", StaticFiles(directory="public"), name="static")
 
@@ -110,6 +111,7 @@ def parse_tags_to_set(tags_input):
 def load_image_pipe():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch_dtype = torch.float16 if device == "cuda" else torch.float32
+    
     is_xl = "xl" in stabilityModel.lower()
     is_safetensors = stabilityModel.endswith(".safetensors")
     PipelineClass = StableDiffusionXLPipeline if is_xl else StableDiffusionPipeline
@@ -135,7 +137,12 @@ def load_image_pipe():
         pipe.watermarker = None
         
     pipe.to(device)    
-    pipe.load_lora_weights(lora)
+    
+    # ใช้ตัวแปร loraPath ที่ประกาศไว้ข้างบน
+    # if os.path.exists(loraPath):
+    #     print(f"Loading LoRA: {loraPath}")
+    #     pipe.load_lora_weights(loraPath)
+        
     return pipe
 
 def generate_images_for_missing_refpaths(session: Session, movie_id: int):
@@ -161,7 +168,9 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
 
     pipeline = None
     try:
+        print("a")
         pipeline = load_image_pipe()
+        print("b")
     except Exception as e:
         print(f"❌ Failed to load Image Pipeline: {e}")
         return
@@ -607,126 +616,150 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
     
     current_movie_id = chapter_obj.movieId
     
-    chapterDetail = chapter_obj.chapterDetail
-    lines = chapterDetail.split('\n')
-    total_lines = len(lines)
-    
-    LINES_PER_CHUNK = 10  
-    OVERLAP = 3          
-    
-    chunks = []
-    if total_lines <= LINES_PER_CHUNK:
-        chunks = [chapterDetail]
-    else: 
-        step = LINES_PER_CHUNK - OVERLAP
-        for i in range(0, total_lines, step):
-            chunk_lines = lines[i : i + LINES_PER_CHUNK]
-            if len(chunk_lines) < 3 and len(chunks) > 0:
-                break
-            chunk_text = "\n".join(chunk_lines)
-            chunks.append(chunk_text)
-
-    results = []
-    translator = Translator()
-
-    async with httpx.AsyncClient(timeout=1800.0) as client:
-        for idx, chunk in enumerate(chunks):
-            print(f"Chunk {idx+1}/{len(chunks)} (Length: {len(chunk)} chars)")
-            translator = Translator()
-            await asyncio.sleep(1) 
-
-            text_to_process = chunk
-            try:
-                translated = await translator.translate(chunk, src='th', dest='en')
-                if translated and translated.text:
-                    text_to_process = translated.text
-            except Exception as e:
-                print(f"Trans Warning Ch {idx+1}: {e}")
-
-            res = await processChunk(text_to_process, client, extractModel) 
-            if res:
-                results.append(res)
-            else:
-                print(f"Chunk {idx+1} Failed")
-
-    merged_entities = {}
-    for res in results:
-        if not res or not res.get("entities"):
-            continue
-        for entity_item in res["entities"]:
-            e_type = entity_item.get("type")
-            name = entity_item.get("name")
-            if not e_type or not name:
-                continue   
-            e_type = e_type.strip().capitalize() 
-            name = name.strip()
-            key = (e_type, name)
-            
-            current_alts_input = entity_item.get("altNames")
-            current_alts = set()
-            if current_alts_input:
-                if isinstance(current_alts_input, list):
-                    current_alts = set(str(a).strip() for a in current_alts_input if str(a).strip())
-                else:
-                    current_alts = set([str(current_alts_input).strip()])
-            
-            if key not in merged_entities:
-                merged_entities[key] = {
-                    "type": e_type,
-                    "name": name,
-                    "altNames": set(),
-                    "VisualTags": set(),    
-                    "IdentityTags": set(),   
-                    "ModifierTags": set()   
-                }
-            
-            merged_entities[key]["altNames"].update(current_alts)
-            if "Character" in e_type:
-                i_set = parse_tags_to_set(entity_item.get("IdentityTags"))
-                m_set = parse_tags_to_set(entity_item.get("ModifierTags"))
-                merged_entities[key]["IdentityTags"].update(i_set)
-                merged_entities[key]["ModifierTags"].update(m_set)
-            else:
-                v_set = parse_tags_to_set(entity_item.get("VisualTags"))
-                merged_entities[key]["VisualTags"].update(v_set)
-
+    # กำหนดค่าเริ่มต้นสำหรับ return
     final_output = {
         "characters": [],
         "locations": [],
-        "items": []
+        "items": [],
+        "status": "extracted"
     }
-    for key, data in merged_entities.items():
-        data["altNames"] = sorted(list(data["altNames"]))
-        e_type_lower = data["type"].lower()
-        if "character" in e_type_lower:
-            data["IdentityTags"] = ", ".join(sorted(list(data["IdentityTags"])))
-            data["ModifierTags"] = ", ".join(sorted(list(data["ModifierTags"])))
-            data.pop("VisualTags", None) 
-            final_output["characters"].append(data)
-        else:
-            data["VisualTags"] = ", ".join(sorted(list(data["VisualTags"])))
-            data.pop("IdentityTags", None)
-            data.pop("ModifierTags", None)
-            
-            if "location" in e_type_lower:
-                final_output["locations"].append(data)
+
+    # -----------------------------------------------------
+    # LOGIC: ถ้ายังไม่เคย Extract -> ทำการ Extract และ Save
+    # -----------------------------------------------------
+    if not chapter_obj.isExtracted:
+        chapterDetail = chapter_obj.chapterDetail
+        lines = chapterDetail.split('\n')
+        total_lines = len(lines)
+        
+        LINES_PER_CHUNK = 10  
+        OVERLAP = 3          
+        
+        chunks = []
+        if total_lines <= LINES_PER_CHUNK:
+            chunks = [chapterDetail]
+        else: 
+            step = LINES_PER_CHUNK - OVERLAP
+            for i in range(0, total_lines, step):
+                chunk_lines = lines[i : i + LINES_PER_CHUNK]
+                if len(chunk_lines) < 3 and len(chunks) > 0:
+                    break
+                chunk_text = "\n".join(chunk_lines)
+                chunks.append(chunk_text)
+
+        results = []
+        translator = Translator()
+
+        async with httpx.AsyncClient(timeout=1800.0) as client:
+            for idx, chunk in enumerate(chunks):
+                print(f"Chunk {idx+1}/{len(chunks)} (Length: {len(chunk)} chars)")
+                translator = Translator()
+                await asyncio.sleep(1) 
+
+                text_to_process = chunk
+                try:
+                    translated = await translator.translate(chunk, src='th', dest='en')
+                    if translated and translated.text:
+                        text_to_process = translated.text
+                except Exception as e:
+                    print(f"Trans Warning Ch {idx+1}: {e}")
+
+                res = await processChunk(text_to_process, client, extractModel) 
+                if res:
+                    results.append(res)
+                else:
+                    print(f"Chunk {idx+1} Failed")
+
+        merged_entities = {}
+        for res in results:
+            if not res or not res.get("entities"):
+                continue
+            for entity_item in res["entities"]:
+                e_type = entity_item.get("type")
+                name = entity_item.get("name")
+                if not e_type or not name:
+                    continue   
+                e_type = e_type.strip().capitalize() 
+                name = name.strip()
+                key = (e_type, name)
+                
+                current_alts_input = entity_item.get("altNames")
+                current_alts = set()
+                if current_alts_input:
+                    if isinstance(current_alts_input, list):
+                        current_alts = set(str(a).strip() for a in current_alts_input if str(a).strip())
+                    else:
+                        current_alts = set([str(current_alts_input).strip()])
+                
+                if key not in merged_entities:
+                    merged_entities[key] = {
+                        "type": e_type,
+                        "name": name,
+                        "altNames": set(),
+                        "VisualTags": set(),    
+                        "IdentityTags": set(),   
+                        "ModifierTags": set()   
+                    }
+                
+                merged_entities[key]["altNames"].update(current_alts)
+                if "Character" in e_type:
+                    i_set = parse_tags_to_set(entity_item.get("IdentityTags"))
+                    m_set = parse_tags_to_set(entity_item.get("ModifierTags"))
+                    merged_entities[key]["IdentityTags"].update(i_set)
+                    merged_entities[key]["ModifierTags"].update(m_set)
+                else:
+                    v_set = parse_tags_to_set(entity_item.get("VisualTags"))
+                    merged_entities[key]["VisualTags"].update(v_set)
+
+        # Update final_output with extracted data
+        for key, data in merged_entities.items():
+            data["altNames"] = sorted(list(data["altNames"]))
+            e_type_lower = data["type"].lower()
+            if "character" in e_type_lower:
+                data["IdentityTags"] = ", ".join(sorted(list(data["IdentityTags"])))
+                data["ModifierTags"] = ", ".join(sorted(list(data["ModifierTags"])))
+                data.pop("VisualTags", None) 
+                final_output["characters"].append(data)
             else:
-                final_output["items"].append(data)
+                data["VisualTags"] = ", ".join(sorted(list(data["VisualTags"])))
+                data.pop("IdentityTags", None)
+                data.pop("ModifierTags", None)
+                
+                if "location" in e_type_lower:
+                    final_output["locations"].append(data)
+                else:
+                    final_output["items"].append(data)
 
-    print(f"Extract Entities Time: {time.perf_counter() - start:.3f} seconds")
+        print(f"Extract Entities Time: {time.perf_counter() - start:.3f} seconds")
 
-    # Save to Database
-    try:
-        saved_status = save_extraction_result(session, chapter_id, final_output)
-        if saved_status:
-            print("✅ Data successfully saved/updated in Database.")
-        else:
-            print("⚠️ Failed to save data to Database.")
-    except Exception as e:
-        print(f"❌ Error saving to database: {e}")
+        # Save to Database
+        try:
+            saved_status = save_extraction_result(session, chapter_id, final_output)
+            if saved_status:
+                print("✅ Data successfully saved/updated in Database.")
+                
+                # UPDATE: isExtracted = True
+                session.refresh(chapter_obj)
+                if not chapter_obj.isExtracted:
+                    chapter_obj.isExtracted = True
+                    session.add(chapter_obj)
+                    session.commit()
+                    print("✅ Updated chapter.isExtracted to True.")
+            else:
+                print("⚠️ Failed to save data to Database.")
+        except Exception as e:
+            print(f"❌ Error saving to database: {e}")
+            
+    else:
+        # -----------------------------------------------------
+        # ถ้า Extract ไปแล้ว -> แจ้งเตือนและข้ามไป Gen ภาพเลย
+        # -----------------------------------------------------
+        print(f"⚠️ Chapter {chapter_id} is already extracted. Skipping extraction logic, proceeding to image checks.")
+        final_output["status"] = "skipped_extraction"
 
     # ------------------------------------------------------------------
     # POST-PROCESSING: Generate Images for Missing Refpaths
+    # (ทำงานต่อเสมอ ไม่ว่าจะเพิ่ง Extract เสร็จ หรือข้ามมา)
     # ------------------------------------------------------------------
     if current_movie_id:
         print("💤 Sleeping 1 sec before image generation...")
@@ -737,7 +770,6 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
             print(f"❌ Error during image generation: {e}")
 
     return final_output
-
 # -----------------------------------------------------------------
 # -----------------------------------------------------------------
 # -----------------------------------------------------------------
