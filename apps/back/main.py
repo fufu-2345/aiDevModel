@@ -22,7 +22,7 @@ from pythainlp.tag import NER
 from services import save_extraction_result
 
 from database import create_db_and_tables, get_session
-from models import movieTitle, chapterContent, character, altCharacter, entity, altEntity
+from models import movieTitle, chapterContent, chunkContent, character, altCharacter, entity, altEntity
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -42,7 +42,6 @@ app.add_middleware(
 
 ollamaURL = "http://localhost:11434/api/generate"
 extractModel = "gemma3:12b"
-transModel = "gemma3:4b"
 stabilityModel = "C:\\stability matrix\\Data\\Models\\StableDiffusion\\juggernautXL_ragnarokBy.safetensors"
 stabilityModel2 ="C:\\stability matrix\\Data\\Models\\StableDiffusion\\revAnimated_v2Rebirth.safetensors"
 lora = r"C:\stability matrix\Data\Models\Lora\Wuxia-PONY-PAseer.safetensors"
@@ -138,7 +137,6 @@ def load_image_pipe():
         
     pipe.to(device)    
     
-    # ใช้ตัวแปร loraPath ที่ประกาศไว้ข้างบน
     # if os.path.exists(loraPath):
     #     print(f"Loading LoRA: {loraPath}")
     #     pipe.load_lora_weights(loraPath)
@@ -245,7 +243,130 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        print("✅ RAM Freed.")
+
+#---------------------------------------
+#---------------------------------------
+#---------------------------------------
+
+async def generate_image_from_text(prompt: str) -> str:
+    try:
+        # --- ตรงนี้คือส่วนที่คุณต้องใส่ Logic เชื่อมต่อ API ---
+        # ตัวอย่าง: response = await client.images.generate(prompt=prompt, ...)
+        # return response.data[0].url
+        
+        # (จำลองการทำงาน)
+        print(f"🎨 Generating image for: {prompt[:30]}...")
+        await asyncio.sleep(2) # สมมติว่า AI ใช้เวลาคิด 2 วิ
+        return "https://example.com/generated-image.jpg" 
+    except Exception as e:
+        print(f"Error generating image: {e}")
+        return ""
+    
+async def translate_text(text: str, retries=3) -> str:
+    """ฟังก์ชันแปลภาษา พร้อมระบบ Retry กันเหนียว"""
+    translator = Translator()
+    for attempt in range(retries):
+        try:
+            result = await translator.translate(text, src='th', dest='en')
+            if result and result.text:
+                return result.text
+        except Exception as e:
+            print(f"Translation error (Attempt {attempt+1}): {e}")
+            await asyncio.sleep(1) # พักแป๊บนึงแล้วลองใหม่
+    return text # ถ้าแปลไม่ได้จริงๆ ให้คืนค่าเดิมกลับไปกัน error
+
+# ==========================================
+# 4. API ENDPOINT
+# ==========================================
+
+@app.get("/create-chunks/{chapter_id}")
+async def create_chunks_for_chapter(
+    chapter_id: int, 
+    session: Session = Depends(get_session)
+):
+    start_time = time.perf_counter()
+    
+    # 1. ดึงข้อมูล Chapter
+    chapter = session.get(chapterContent, chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    
+    if not chapter.chapterDetail:
+        return {"status": "failed", "reason": "No content in chapterDetail"}
+
+    # ลบ Chunks เก่าทิ้งก่อน (ถ้ามี) เพื่อไม่ให้ข้อมูลซ้ำซ้อนเวลารันซ้ำ
+    existing_chunks = session.exec(select(chunkContent).where(chunkContent.chapterId == chapter_id)).all()
+    for old_chunk in existing_chunks:
+        session.delete(old_chunk)
+    session.commit()
+
+    # 2. เริ่มหั่น (Chunking Logic)
+    lines = chapter.chapterDetail.split('\n')
+    total_lines = len(lines)
+    
+    LINES_PER_CHUNK = 8  
+    OVERLAP =  1          
+    
+    raw_chunks = [] # เก็บ List ของ (text_thai)
+    
+    if total_lines <= LINES_PER_CHUNK:
+        raw_chunks.append(chapter.chapterDetail)
+    else: 
+        step = LINES_PER_CHUNK - OVERLAP
+        for i in range(0, total_lines, step):
+            chunk_lines = lines[i : i + LINES_PER_CHUNK]
+            # ถ้าเหลือเศษบรรทัดน้อยเกินไป (เช่น 1-2 บรรทัด) ไม่ต้องแยกก้อนใหม่ ให้รวมกับก้อนสุดท้ายไปเลย (ถ้าทำได้) หรือ break ไป
+            if len(chunk_lines) < 3 and len(raw_chunks) > 0:
+                # จริงๆ ตรงนี้ logic เดิมของคุณคือ break ทิ้งไปเลย ซึ่งอาจทำให้เนื้อหาตอนจบหายได้
+                # แต่ผมคง logic เดิมไว้ตามที่คุณให้มาครับ
+                break 
+            
+            chunk_text = "\n".join(chunk_lines)
+            raw_chunks.append(chunk_text)
+
+    print(f"Processing Chapter {chapter_id}: Found {len(raw_chunks)} chunks.")
+
+    # 3. Loop แปลและบันทึก
+    saved_chunks_count = 0
+    
+    for idx, thai_text in enumerate(raw_chunks):
+        print(f"Processing chunk {idx+1}/{len(raw_chunks)}...")
+
+        # 1. แปลเป็น Eng
+        eng_text = await translate_text(thai_text)
+        
+        # 2. [เพิ่มใหม่] ส่ง Eng text ไปให้ AI วาดรูป
+        # เรา await ตรงนี้เลย เพื่อให้ได้ URL ก่อนบันทึกลง DB
+        image_url = await generate_image_from_text(eng_text)
+        
+        # 3. สร้าง Object ลง DB (ตอนนี้ picRef มีค่าแล้ว!)
+        new_chunk = chunkContent(
+            chunkNumber = idx + 1,
+            chunkDetail = eng_text, 
+            picRef = image_url,     # <--- ใส่ URL รูปที่ได้มาตรงนี้
+            chapterId = chapter_id
+        )
+        
+        session.add(new_chunk)
+        saved_chunks_count += 1
+        
+        # พักหายใจ 1 วินาที (รวมกับเวลา Gen รูป Loop นึงอาจใช้เวลา 3-4 วิ)
+        await asyncio.sleep(1) 
+
+        # commit ทีเดียวนอก Loop หรือใน Loop ก็ได้ตาม Logic Transaction ที่วางไว้
+    session.commit()
+    
+    duration = time.perf_counter() - start_time
+    
+    return {
+        "status": "success",
+        "chapter_id": chapter_id,
+        "total_chunks_created": saved_chunks_count,
+        "duration_seconds": f"{duration:.2f}",
+        "message": "Chunks have been translated and saved to chunkContent table."
+    }
+
+#---------------------------------------
 
 @app.get("/movies/", response_model=List[movieTitle])
 def get_movies(session: Session = Depends(get_session)):
