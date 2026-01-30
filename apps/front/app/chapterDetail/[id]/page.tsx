@@ -77,7 +77,9 @@ export default function ChapterReaderPage({
     if (!chapterId) return;
     const fetchChapter = async () => {
       try {
-        const res = await fetch(`http://127.0.0.1:8000/chapters/${chapterId}`);
+        const res = await fetch(
+          `http://127.0.0.1:8000/movies/chapters/${chapterId}`,
+        );
         if (res.ok) {
           const data = await res.json();
           setChapter(data);
@@ -101,7 +103,7 @@ export default function ChapterReaderPage({
         `http://127.0.0.1:8000/extract/${chapterId}`,
         {
           method: "GET",
-        }
+        },
       );
       if (response.ok) {
         return;
@@ -118,7 +120,7 @@ export default function ChapterReaderPage({
         `http://127.0.0.1:8000/extract/${chapterId}`,
         {
           method: "GET",
-        }
+        },
       );
       if (response.ok) {
         try {
@@ -126,7 +128,7 @@ export default function ChapterReaderPage({
             `http://127.0.0.1:8000/genPic/${chapterId}`,
             {
               method: "GET",
-            }
+            },
           );
           console.log(response, "aaaaa");
           if (response.ok) {
@@ -153,7 +155,7 @@ export default function ChapterReaderPage({
         `http://127.0.0.1:8000/genPic/${chapterId}`,
         {
           method: "GET",
-        }
+        },
       );
       console.log(response, "aaaaa");
       if (response.ok) {
@@ -171,14 +173,17 @@ export default function ChapterReaderPage({
     if (!chapterId) return;
     const loadingToast = toast.loading("Saving...");
     try {
-      const res = await fetch(`http://127.0.0.1:8000/chapters/${chapterId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chapterTitle: editTitle,
-          chapterDetail: editContent,
-        }),
-      });
+      const res = await fetch(
+        `http://127.0.0.1:8000/movies/chapters/${chapterId}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chapterTitle: editTitle,
+            chapterDetail: editContent,
+          }),
+        },
+      );
       if (res.ok) {
         const updated = await res.json();
         setChapter(updated);
