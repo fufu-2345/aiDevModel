@@ -4,7 +4,7 @@ from sqlmodel import Session
 from database import get_session
 from models import movieTitle, chapterContent
 from googletrans import Translator
-from sqlmodel import Session, select
+from sqlmodel import Session, select, SQLModel
 import fitz 
 import re
 import gc
@@ -284,20 +284,51 @@ def merge_tags(old_tags: str, new_tags: str) -> str:
     merged = s1.union(s2)
     return ", ".join(sorted(list(merged)))
 
+def find_entity_by_any_name(session: Session, name: str, e_type: str, movie_id: int):
+    stmt = select(entity).where(entity.name == name, entity.type == e_type, entity.movieId == movie_id)
+    found = session.exec(stmt).first()
+    if found:
+        return found
+    
+    alt_stmt = (
+        select(entity)
+        .join(altEntity, altEntity.entityId == entity.id)
+        .where(altEntity.altName == name, entity.type == e_type, entity.movieId == movie_id)
+    )
+    return session.exec(alt_stmt).first()
+
+def find_character_by_any_name(session: Session, name: str, movie_id: int):
+    stmt = select(character).where(character.name == name, character.movieId == movie_id)
+    found = session.exec(stmt).first()
+    if found:
+        return found
+    
+    alt_stmt = (
+        select(character)
+        .join(altCharacter, altCharacter.entityId == character.id)
+        .where(altCharacter.altName == name, character.movieId == movie_id)
+    )
+    return session.exec(alt_stmt).first()
+
+def handle_alt_names(session: Session, alt_model: SQLModel, target_id: int, alt_names: list):
+    for alt in alt_names:
+        check_stmt = select(alt_model).where(
+            alt_model.altName == alt,
+            alt_model.entityId == target_id
+        )
+        if not session.exec(check_stmt).first():
+            session.add(alt_model(altName=alt, entityId=target_id))
+            
 def save_extraction_result(session: Session, chapter_id: int, data: dict):
     chapter = session.get(chapterContent, chapter_id)
     if not chapter or not chapter.movieId:
-        print("Error: Chapter not found or not linked to a movie.")
         return False
     
     current_movie_id = chapter.movieId
+
     for char_data in data.get("characters", []):
         name = char_data["name"]
-        statement = select(character).where(
-            character.name == name, 
-            character.movieId == current_movie_id
-        )
-        existing_char = session.exec(statement).first()
+        existing_char = find_character_by_any_name(session, name, current_movie_id)
 
         if existing_char:
             existing_char.IdentityTags = merge_tags(existing_char.IdentityTags, char_data.get("IdentityTags", ""))
@@ -317,27 +348,14 @@ def save_extraction_result(session: Session, chapter_id: int, data: dict):
             session.refresh(new_char)
             target_char_id = new_char.id
 
-        if "altNames" in char_data:
-            for alt in char_data["altNames"]:
-                alt_stmt = select(altCharacter).where(
-                    altCharacter.altName == alt,
-                    altCharacter.entityId == target_char_id
-                )
-                if not session.exec(alt_stmt).first():
-                    session.add(altCharacter(altName=alt, entityId=target_char_id))
+        handle_alt_names(session, altCharacter, target_char_id, char_data.get("altNames", []))
 
     all_general_entities = data.get("locations", []) + data.get("items", [])
 
     for ent_data in all_general_entities:
         name = ent_data["name"]
         e_type = ent_data["type"]
-
-        statement = select(entity).where(
-            entity.name == name,
-            entity.type == e_type,
-            entity.movieId == current_movie_id
-        )
-        existing_ent = session.exec(statement).first()
+        existing_ent = find_entity_by_any_name(session, name, e_type, current_movie_id)
 
         if existing_ent:
             existing_ent.visual_tags = merge_tags(existing_ent.visual_tags, ent_data.get("VisualTags", ""))
@@ -354,17 +372,11 @@ def save_extraction_result(session: Session, chapter_id: int, data: dict):
             session.commit()
             session.refresh(new_ent)
             target_ent_id = new_ent.id
-        if "altNames" in ent_data:
-            for alt in ent_data["altNames"]:
-                alt_stmt = select(altEntity).where(
-                    altEntity.altName == alt,
-                    altEntity.entityId == target_ent_id
-                )
-                if not session.exec(alt_stmt).first():
-                    session.add(altEntity(altName=alt, entityId=target_ent_id))
+        
+        handle_alt_names(session, altEntity, target_ent_id, ent_data.get("altNames", []))
+
     chapter.isExtracted = True
     session.add(chapter)
-
     session.commit()
     return True
 
@@ -581,13 +593,11 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
         try:
             saved_status = save_extraction_result(session, chapter_id, final_output)
             if saved_status:
-                print("✅ Data successfully saved/updated in Database.")
                 session.refresh(chapter_obj)
                 if not chapter_obj.isExtracted:
                     chapter_obj.isExtracted = True
                     session.add(chapter_obj)
                     session.commit()
-                    print("✅ Updated chapter.isExtracted to True.")
             else:
                 print("⚠️ Failed to save data to Database.")
         except Exception as e:
@@ -595,12 +605,7 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
     else:
         print(f"skip")
         final_output["status"] = "skipped_extraction"
-    # ------------------------------------------------------------------
-    # POST-PROCESSING: Generate Images for Missing Refpaths
-    # (ทำงานต่อเสมอ ไม่ว่าจะเพิ่ง Extract เสร็จ หรือข้ามมา)
-    # ------------------------------------------------------------------
     if current_movie_id:
-        print("💤 Sleeping 1 sec before image generation...")
         await asyncio.sleep(1)
         try:
             generate_images_for_missing_refpaths(session, current_movie_id)

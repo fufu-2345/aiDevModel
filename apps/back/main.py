@@ -44,7 +44,7 @@ ollamaURL = "http://localhost:11434/api/generate"
 extractModel = "gemma3:12b"
 stabilityModel = "C:\\stability matrix\\Data\\Models\\StableDiffusion\\juggernautXL_ragnarokBy.safetensors"
 # stabilityModel2 ="C:\\stability matrix\\Data\\Models\\StableDiffusion\\revAnimated_v2Rebirth.safetensors"
-lora = r"C:\stability matrix\Data\Models\Lora\Wuxia-PONY-PAseer.safetensors"
+# lora = r"C:\stability matrix\Data\Models\Lora\Wuxia-PONY-PAseer.safetensors"
 app.mount("/static", StaticFiles(directory="public"), name="static")
 
 IMG_WIDTH = 1280
