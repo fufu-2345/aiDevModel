@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from typing import List
-from database import get_session # เปลี่ยนตาม path ของคุณ
-from models import movieTitle, chapterContent # เปลี่ยนตาม path ของคุณ
+from database import get_session 
+from models import movieTitle, chapterContent 
 from pydantic import BaseModel
 
 router = APIRouter(

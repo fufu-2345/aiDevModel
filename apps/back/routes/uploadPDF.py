@@ -235,41 +235,77 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+# def load_image_pipe():
+#     device = "cuda" if torch.cuda.is_available() else "cpu"
+#     torch_dtype = torch.float16
+    
+#     is_xl = "xl" in stabilityModel.lower()
+#     is_safetensors = stabilityModel.endswith(".safetensors")
+#     PipelineClass = StableDiffusionXLPipeline if is_xl else StableDiffusionPipeline
+    
+#     common_args = {
+#         "torch_dtype": torch_dtype,
+#         "low_cpu_mem_usage": True,
+#     }
+#     if is_safetensors:
+#         pipe = PipelineClass.from_single_file(
+#             stabilityModel,
+#             **common_args
+#         )
+#     else:
+#         pipe = PipelineClass.from_pretrained(
+#             stabilityModel,
+#             variant="fp16" if device == "cuda" else None,
+#             **common_args
+#         )
+#     if hasattr(pipe, "safety_checker"):
+#         pipe.safety_checker = None
+#     if hasattr(pipe, "requires_safety_checker"):
+#         pipe.requires_safety_checker = False
+#     if hasattr(pipe, "watermarker"):
+#         pipe.watermarker = None
+#     pipe.to(device, dtype=torch_dtype) 
+    
+#     # if os.path.exists(loraPath):
+#     #     print(f"Loading LoRA: {loraPath}")
+#     #     pipe.load_lora_weights(loraPath)
+        
+#     return pipe
+
 def load_image_pipe():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch_dtype = torch.float16 if device == "cuda" else torch.float32
-    
+
     is_xl = "xl" in stabilityModel.lower()
     is_safetensors = stabilityModel.endswith(".safetensors")
     PipelineClass = StableDiffusionXLPipeline if is_xl else StableDiffusionPipeline
-    
-    common_args = {
-        "torch_dtype": torch_dtype,
-        "low_cpu_mem_usage": True,
-    }
+
     if is_safetensors:
-        pipe = PipelineClass.from_single_file(
+            pipe = PipelineClass.from_single_file(
             stabilityModel,
-            **common_args
+            use_safetensors=True,
+            torch_dtype=torch_dtype
         )
     else:
         pipe = PipelineClass.from_pretrained(
             stabilityModel,
-            variant="fp16" if device == "cuda" else None,
-            **common_args
+            torch_dtype=torch_dtype,
+            use_safetensors=True
         )
+
     if hasattr(pipe, "safety_checker"):
         pipe.safety_checker = None
     if hasattr(pipe, "requires_safety_checker"):
         pipe.requires_safety_checker = False
     if hasattr(pipe, "watermarker"):
         pipe.watermarker = None
-    pipe.to(device, dtype=torch_dtype) 
-    
+
+    pipe.to(device)    
+
     # if os.path.exists(loraPath):
     #     print(f"Loading LoRA: {loraPath}")
     #     pipe.load_lora_weights(loraPath)
-        
+
     return pipe
 
 def merge_tags(old_tags: str, new_tags: str) -> str:
