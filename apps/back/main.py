@@ -150,7 +150,7 @@ async def create_chunks_for_chapter(
     total_lines = len(lines)
     
     LINES_PER_CHUNK = 5  
-    OVERLAP =  1          
+    OVERLAP = 1          
     
     raw_chunks = [] # เก็บ List ของ (text_thai)
     
@@ -160,10 +160,10 @@ async def create_chunks_for_chapter(
         step = LINES_PER_CHUNK - OVERLAP
         for i in range(0, total_lines, step):
             chunk_lines = lines[i : i + LINES_PER_CHUNK]
-            # ถ้าเหลือเศษบรรทัดน้อยเกินไป (เช่น 1-2 บรรทัด) ไม่ต้องแยกก้อนใหม่ ให้รวมกับก้อนสุดท้ายไปเลย (ถ้าทำได้) หรือ break ไป
+            
+            # Logic เดิม: ถ้าเหลือน้อยกว่า 3 บรรทัดจะข้ามไป
+            # (ระวังเนื้อหาตอนท้ายหาย หากประโยคสุดท้ายสั้นเกินไป)
             if len(chunk_lines) < 3 and len(raw_chunks) > 0:
-                # จริงๆ ตรงนี้ logic เดิมของคุณคือ break ทิ้งไปเลย ซึ่งอาจทำให้เนื้อหาตอนจบหายได้
-                # แต่ผมคง logic เดิมไว้ตามที่คุณให้มาครับ
                 break 
             
             chunk_text = "\n".join(chunk_lines)
@@ -180,25 +180,21 @@ async def create_chunks_for_chapter(
         # 1. แปลเป็น Eng
         eng_text = await translate_text(thai_text)
         
-        # 2. [เพิ่มใหม่] ส่ง Eng text ไปให้ AI วาดรูป
-        # เรา await ตรงนี้เลย เพื่อให้ได้ URL ก่อนบันทึกลง DB
-        image_url = await generate_image_from_text(eng_text)
-        
-        # 3. สร้าง Object ลง DB (ตอนนี้ picRef มีค่าแล้ว!)
+        # 2. สร้าง Object ลง DB (ตัดส่วน generate_image ออก)
         new_chunk = chunkContent(
             chunkNumber = idx + 1,
             chunkDetail = eng_text, 
-            picRef = image_url,     # <--- ใส่ URL รูปที่ได้มาตรงนี้
+            picRef = None,           # ไม่ใส่ URL รูปภาพแล้ว
             chapterId = chapter_id
         )
         
         session.add(new_chunk)
         saved_chunks_count += 1
         
-        # พักหายใจ 1 วินาที (รวมกับเวลา Gen รูป Loop นึงอาจใช้เวลา 3-4 วิ)
-        await asyncio.sleep(1) 
+        # พักหายใจสั้นๆ เพื่อป้องกัน Rate Limit ของ API แปลภาษา
+        await asyncio.sleep(0.5) 
 
-        # commit ทีเดียวนอก Loop หรือใน Loop ก็ได้ตาม Logic Transaction ที่วางไว้
+    # commit ทั้งหมดหลังจากจบ Loop
     session.commit()
     
     duration = time.perf_counter() - start_time

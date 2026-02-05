@@ -305,7 +305,8 @@ def load_image_pipe():
     # if os.path.exists(loraPath):
     #     print(f"Loading LoRA: {loraPath}")
     #     pipe.load_lora_weights(loraPath)
-
+    print(torch_dtype)
+    
     return pipe
 
 def merge_tags(old_tags: str, new_tags: str) -> str:
