@@ -92,6 +92,7 @@ def on_startup():
 # ==========================================
 
 OUTPUT_DIR = "public/storage/pic/"
+CHAR_DIR = "public/storage/characters/" # 📂 โฟลเดอร์เก็บรูปตัวละคร (ตาม id)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # 📉 ลดความละเอียดลงเล็กน้อยเพื่อประหยัด RAM (สำหรับ CPU 16GB)
@@ -120,25 +121,45 @@ def clean_prompt(text):
     if isinstance(text, list):
         text = ", ".join(text)
     if not isinstance(text, str):
-        return "cinematic scene, masterpiece"
+        return ""
     
     # ลบ json syntax ที่อาจหลงเหลือ
     text = re.sub(r"[\[\]\{\}\"']", "", text)
     # ลบ key-value ที่อาจติดมา เช่น style: ...
     text = re.sub(r"\w+\s*:\s*", "", text)
+    # ลบช่องว่างซ้ำๆ
+    text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 def log_memory_usage(label=""):
     if psutil:
         mem = psutil.virtual_memory()
         print(f"   📊 RAM [{label}]: Used {mem.percent}% | Free {mem.available / 1024**3:.2f} GB")
+        return mem.percent
     else:
         print(f"   📊 RAM [{label}]: (psutil not installed)")
+        return 0
 
 def flush_memory():
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+async def wait_for_memory(threshold=85):
+    """รอให้ RAM ลดลงต่ำกว่า threshold ก่อนทำงานต่อ"""
+    if not psutil: return
+    
+    print("   ⏳ Checking Memory...")
+    for _ in range(30): # รอสูงสุด 30 วินาที
+        mem_percent = log_memory_usage("Check")
+        if mem_percent < threshold:
+            print("   ✅ Memory safe.")
+            return
+        
+        print(f"   ⚠️ RAM high ({mem_percent}%), waiting and cleaning...")
+        flush_memory()
+        await asyncio.sleep(2)
+    print("   ⚠️ Proceeding despite high RAM (Timeout waiting).")
 
 async def unload_ollama_model(client: httpx.AsyncClient):
     print("   ⬇️ Force Unloading Ollama...")
@@ -176,7 +197,7 @@ def load_image_pipe():
 
     print(f"Loading Model: {stabilityModel} (dtype={torch_dtype})")
     
-    # --- 🟢 FIX: โหลด Image Encoder แบบ Offline First เพื่อป้องกัน Network Timeout ---
+    # --- โหลด Image Encoder แบบ Offline First ---
     image_encoder = None
     print("   Loading Image Encoder...")
     
@@ -186,11 +207,11 @@ def load_image_pipe():
             "h94/IP-Adapter", 
             subfolder="models/image_encoder", 
             torch_dtype=torch_dtype,
-            local_files_only=True # ⚡ บังคับใช้ไฟล์ในเครื่องก่อน
+            local_files_only=True
         )
         print("   ✅ Loaded ViT-H from local cache.")
     except Exception:
-        # 2. ถ้าไม่มีใน Cache ให้ลองโหลดใหม่ (h94)
+        # 2. ถ้าไม่มีใน Cache ให้ลองโหลดใหม่
         try:
             print("   ⬇️ Downloading ViT-H from HuggingFace...")
             image_encoder = CLIPVisionModelWithProjection.from_pretrained(
@@ -200,7 +221,6 @@ def load_image_pipe():
             )
         except Exception as e1:
             print(f"   ⚠️ Failed to load h94 ViT-H: {e1}")
-            # 3. ลอง Fallback ไป laion (Cache)
             try:
                 image_encoder = CLIPVisionModelWithProjection.from_pretrained(
                     "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
@@ -209,9 +229,7 @@ def load_image_pipe():
                 )
                 print("   ✅ Loaded LAION ViT-H from local cache.")
             except Exception:
-                # 4. ลอง Fallback ไป laion (Download)
                 try:
-                    print("   ⬇️ Downloading LAION ViT-H...")
                     image_encoder = CLIPVisionModelWithProjection.from_pretrained(
                         "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
                         torch_dtype=torch_dtype
@@ -222,14 +240,12 @@ def load_image_pipe():
     # --- โหลด Pipeline ---
     try:
         if is_single_file:
-                # ใช้ from_single_file สำหรับไฟล์ .safetensors/.ckpt
                 pipe = PipelineClass.from_single_file(
                 stabilityModel,
                 torch_dtype=torch_dtype,
                 image_encoder=image_encoder 
             )
         else:
-            # ใช้ from_pretrained สำหรับโฟลเดอร์/Repo
             pipe = PipelineClass.from_pretrained(
                 stabilityModel,
                 torch_dtype=torch_dtype,
@@ -238,7 +254,6 @@ def load_image_pipe():
             )
     except Exception as e:
         print(f"   ⚠️ Load failed, trying standard load... Error: {e}")
-        # กรณี Fallback (เช่น config json มีปัญหาหรือไม่ใช่ safetensors repo)
         try:
             pipe = PipelineClass.from_pretrained(
                 stabilityModel,
@@ -281,34 +296,30 @@ def get_mask_coordinates(position_keyword, width=IMG_WIDTH, height=IMG_HEIGHT):
 # ==========================================
 
 async def analyze_scene_plan(chunk_text: str, client: httpx.AsyncClient):
-    log_memory_usage("Before Ollama") 
+    await wait_for_memory(threshold=85) 
     
+    # 🇨🇳 Prompt สั่ง Ollama ให้ตอบสั้นๆ (Concise Keywords)
     prompt = f"""
     Role: AI Visual Director.
-    Task: Convert the story chunk into a structured Visual Prompt for Stable Diffusion.
+    Task: Create a VERY SHORT, keyword-based Visual Prompt for Stable Diffusion.
     
     Input Story:
     "{chunk_text}"
 
     Rules:
-    1. 'environment': Describe the background scene vividly (style, lighting, location).
-    2. 'characters': List characters present. Keep names EXACTLY as in text.
+    1. 'environment': Short keywords only (max 10 words). Focus on visual style (e.g., "misty mountains, bamboo forest").
+    2. 'characters': List characters. Use names from text.
     3. 'position': Assign [LEFT, CENTER, RIGHT, BACKGROUND].
-    4. 'visual_action': Describe pose/action (e.g., "sitting on a chair", "holding a sword").
+    4. 'visual_action': Short keywords for action/clothes (max 5 words). **Ancient Chinese Robes (Hanfu) only.**
 
     Output JSON Format:
     {{
-        "environment": "A dimly lit tavern with wooden tables, candlelight style",
+        "environment": "Misty mountain peak, ancient chinese style",
         "characters": [
             {{
-                "name": "Alice",
+                "name": "Han Li",
                 "position": "LEFT",
-                "visual_action": "looking surprised, hand on mouth"
-            }},
-            {{
-                "name": "Bob",
-                "position": "RIGHT",
-                "visual_action": "standing confidently, arms crossed"
+                "visual_action": "wearing green hanfu, holding bottle"
             }}
         ]
     }}
@@ -329,7 +340,14 @@ async def analyze_scene_plan(chunk_text: str, client: httpx.AsyncClient):
         response.raise_for_status() 
         result_text = response.json().get("response", "")
         
-        match = re.search(r'\{.*\}', result_text, re.DOTALL)
+        # 🔍 Debug: Print Raw Response
+        print(f"   🤖 LLM Raw Response: {result_text[:200]}...")
+
+        # 🧹 Clean Markdown code blocks (```json ... ```)
+        clean_json = re.sub(r'```json\s*', '', result_text)
+        clean_json = re.sub(r'```', '', clean_json)
+        
+        match = re.search(r'\{.*\}', clean_json, re.DOTALL)
         if match:
             return json.loads(match.group(0))
         else:
@@ -338,7 +356,6 @@ async def analyze_scene_plan(chunk_text: str, client: httpx.AsyncClient):
 
     except Exception as e:
         print(f"❌ Scene Analysis Error: {e}")
-        traceback.print_exc()
         return None
 
 # ==========================================
@@ -346,20 +363,51 @@ async def analyze_scene_plan(chunk_text: str, client: httpx.AsyncClient):
 # ==========================================
 
 def find_character_refpath(session: Session, movie_id: int, name_query: str) -> Optional[str]:
+    """
+    ค้นหา Path รูปตัวละครจากชื่อ
+    1. หาใน DB (refpath)
+    2. ถ้าไม่เจอหรือว่าง ให้ลองหาจาก ID ใน public/storage/characters/{id}.png
+    """
     if not name_query: return None
     name_query = name_query.strip()
 
+    # ฟังก์ชันช่วยเช็คว่าไฟล์มีจริงไหม
+    def validate_path(p):
+        if p and os.path.exists(p): return p
+        return None
+
+    # 1. ค้นหาจากชื่อหลัก
     char = session.exec(select(character).where(
         character.movieId == movie_id,
         character.name.ilike(f"%{name_query}%")
     )).first()
-    if char and char.refpath: return char.refpath
 
-    alt = session.exec(select(character).join(altCharacter).where(
+    if char:
+        # A. ลองใช้ refpath ใน DB
+        if res := validate_path(char.refpath): return res
+        
+        # B. ลองใช้ path ตาม ID (public/storage/characters/ID.png)
+        id_path_png = os.path.join(CHAR_DIR, f"{char.id}.png")
+        if res := validate_path(id_path_png): return res
+        
+        id_path_jpg = os.path.join(CHAR_DIR, f"{char.id}.jpg")
+        if res := validate_path(id_path_jpg): return res
+
+    # 2. ค้นหาจากชื่อเล่น (AltNames)
+    alt_char = session.exec(select(character).join(altCharacter).where(
         character.movieId == movie_id,
         altCharacter.altName.ilike(f"%{name_query}%")
     )).first()
-    if alt and alt.refpath: return alt.refpath
+
+    if alt_char:
+        # ใช้ Logic เดียวกันกับข้างบน แต่ใช้ ID ของ alt_char (ซึ่งคือ instance ของ character)
+        if res := validate_path(alt_char.refpath): return res
+        
+        id_path_png = os.path.join(CHAR_DIR, f"{alt_char.id}.png")
+        if res := validate_path(id_path_png): return res
+        
+        id_path_jpg = os.path.join(CHAR_DIR, f"{alt_char.id}.jpg")
+        if res := validate_path(id_path_jpg): return res
 
     return None
 
@@ -373,26 +421,53 @@ def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_pa
     
     width, height = IMG_WIDTH, IMG_HEIGHT
     people_to_gen = []
+    character_prompts = [] 
     
-    # ✅ ล้าง Prompt ให้สะอาด
     env_desc = clean_prompt(scene_plan.get('environment', 'scene'))
-    base_prompt = f"{env_desc}, masterpiece, best quality, 4k"
-    print(f"   📝 Clean Prompt: {base_prompt}")
     
+    # 🧧 Forced Style Prompts (ลดให้สั้นลง)
+    STYLE_PROMPT = "Ancient Chinese Xianxia, Wuxia, Hanfu, dynasty era, sharp focus"
+    
+    # 🚫 Negative Prompt (ลดให้สั้นลง แต่ยังครอบคลุม)
+    NEGATIVE_PROMPT = "modern, western, low quality, ugly, deformed, blurry"
+
+    # จัดการตัวละคร
     for char_info in scene_plan.get('characters', []):
         name = char_info.get('name')
         ref_path = find_character_refpath(session, movie_id, name)
         action = clean_prompt(char_info.get('visual_action', ''))
         
+        # เพิ่ม 'wearing hanfu' ซ้ำอีกรอบเพื่อความชัวร์
+        if "hanfu" not in action.lower() and "robe" not in action.lower():
+            action += ", wearing Hanfu"
+
         if ref_path and os.path.exists(ref_path):
             people_to_gen.append({
+                "name": name,
                 "refpath": ref_path,
                 "position": char_info.get('position', 'CENTER'),
-                "prompt": f"{action}, {name}, masterpiece"
+                "prompt": f"{STYLE_PROMPT}, {action}, {name}, masterpiece"
             })
-            print(f"   found ref for {name}: {ref_path}")
+            print(f"   ✅ Found ref for {name}: {ref_path}")
         else:
-            base_prompt += f", {name} {action}"
+            # เก็บ Prompt ตัวละครไว้ใส่หน้าสุด
+            character_prompts.append(f"{name} {action}")
+            print(f"   ⚠️ No ref for {name}, adding to text prompt.")
+
+    # 🛑 ตรวจสอบว่ามีตัวละครไหม
+    if not people_to_gen and not character_prompts:
+        print("   ⚠️ WARNING: No characters detected in scene plan! (Background only)")
+
+    # 🟢 Construct Base Prompt (สั้นกระชับ):
+    full_character_prompt = ", ".join(character_prompts)
+    
+    parts = [STYLE_PROMPT]
+    if full_character_prompt: parts.append(full_character_prompt)
+    parts.append(env_desc)
+    parts.append("masterpiece, 4k")
+    
+    base_prompt = ", ".join(parts)
+    print(f"   📝 Final Base Prompt: {base_prompt}")
 
     try:
         pipe = load_image_pipe()
@@ -407,26 +482,27 @@ def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_pa
         
         pipe.set_ip_adapter_scale(0.0)
         
-        # ✅ ใช้พื้นหลังสีเทา + Strength 1.0 เพื่อวาดใหม่หมดจด
-        init_bg = Image.new("RGB", (width, height), (128, 128, 128)) # สีเทา
-        init_mask = Image.new("L", (width, height), "white") # บังคับวาดทับทั้งภาพ
-        
+        # ใช้พื้นหลังสีเทา + Strength 1.0
+        init_bg = Image.new("RGB", (width, height), (128, 128, 128)) 
+        init_mask = Image.new("L", (width, height), "white") 
         dummy_ref = Image.new("RGB", (224, 224), "black")
 
         print("   Generating base image...")
         base_image = pipe(
             prompt=base_prompt,
+            negative_prompt=NEGATIVE_PROMPT, 
             image=init_bg,       
             mask_image=init_mask, 
             ip_adapter_image=dummy_ref, 
             height=height, width=width, 
             num_inference_steps=25,
-            strength=1.0, # ✅ บังคับวาดใหม่ 100% ไม่สนพื้นหลัง
-            guidance_scale=7.5 # ค่ามาตรฐาน SDXL
+            strength=1.0, 
+            guidance_scale=7.5 
         ).images[0]
 
         for p in people_to_gen:
-            print(f"   Inpainting character at {p['position']}...")
+            print(f"   👤 Inpainting Character: {p.get('name')} at {p['position']}")
+            
             coords = get_mask_coordinates(p['position'], width, height)
             mask = Image.new("L", (width, height), 0)
             draw = ImageDraw.Draw(mask)
@@ -437,11 +513,12 @@ def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_pa
             pipe.set_ip_adapter_scale(0.7)
             base_image = pipe(
                 prompt=p['prompt'],
+                negative_prompt=NEGATIVE_PROMPT,
                 image=base_image,
                 mask_image=mask,
                 ip_adapter_image=ref_image,
                 num_inference_steps=25,
-                strength=0.9, # แรงๆ เพื่อให้เปลี่ยนท่าทาง
+                strength=0.9, 
                 guidance_scale=7.5
             ).images[0]
 
@@ -486,6 +563,8 @@ async def generate_images_for_chapter(
 
             print(f"--- Processing Chunk {chunk.chunkNumber} ---")
             
+            await wait_for_memory(threshold=85)
+
             scene_plan = await analyze_scene_plan(chunk.chunkDetail, client)
             
             if not scene_plan:
@@ -494,6 +573,8 @@ async def generate_images_for_chapter(
             
             await unload_ollama_model(client)
             flush_memory()
+            
+            await wait_for_memory(threshold=85)
 
             filename = f"ch{chapter_id}_chunk{chunk.chunkNumber}_{int(time.time())}.png"
             full_path = os.path.join(OUTPUT_DIR, filename)
