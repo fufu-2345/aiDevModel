@@ -64,6 +64,15 @@ def clearThaiTypeing(text: str) -> str:
         fixed_text = fixed_text.replace(wrong_word, correct_word)    
     return fixed_text
 
+GENERIC_NAMES = {
+    "man", "woman", "boy", "girl", "child", "kid", "baby", "children",
+    "uncle", "aunt", "father", "mother", "dad", "mom", "parent", "parents",
+    "brother", "sister", "grandfather", "grandmother", "grandpa", "grandma",
+    "stranger", "villager", "person", "people", "someone", "nobody", "anybody",
+    "friend", "enemy", "everyone", "master", "disciple", "teacher", "student",
+    "he", "she", "him", "her", "they", "them", "it", "that", "this"
+}
+
 def clearNewline(text: str) -> str:
     def replacer(match):
         found = match.group()
@@ -113,6 +122,7 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
     Input Text:
     {chunk_text}
     """
+
     payload = {
         "model": extractModel,
         "prompt": prompt,
@@ -123,6 +133,7 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
         },
         "format": "json"
     }
+
     try:
         response = await client.post(ollamaURL, json=payload)
         response.raise_for_status()
@@ -142,6 +153,7 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
         else:
             print("No JSON found in response.")
             return None
+
     except Exception as e:
         print(f"Process Error: {e}")
         return None
@@ -527,13 +539,14 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
         "items": [],
         "status": "extracted"
     }
+
     if not chapter_obj.isExtracted:
         chapterDetail = chapter_obj.chapterDetail
         lines = chapterDetail.split('\n')
         total_lines = len(lines)
         
-        LINES_PER_CHUNK = 5  
-        OVERLAP = 1          
+        LINES_PER_CHUNK = 10  
+        OVERLAP = 3          
         
         chunks = []
         if total_lines <= LINES_PER_CHUNK:
@@ -546,8 +559,10 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                     break
                 chunk_text = "\n".join(chunk_lines)
                 chunks.append(chunk_text)
+
         results = []
         translator = Translator()
+
         async with httpx.AsyncClient(timeout=1800.0) as client:
             for idx, chunk in enumerate(chunks):
                 print(f"Chunk {idx+1}/{len(chunks)} (Length: {len(chunk)} chars)")
@@ -568,81 +583,133 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                 else:
                     print(f"Chunk {idx+1} Failed")
 
-        merged_entities = {}
+        # ----------------------------------------------------------------
+        # NEW SMART MERGE LOGIC (In-place) with GENERIC NAME FILTER
+        # ----------------------------------------------------------------
+        merged_list = []
+        
+        all_raw_entities = []
         for res in results:
-            if not res or not res.get("entities"):
+            if res and "entities" in res:
+                all_raw_entities.extend(res["entities"])
+
+        for raw in all_raw_entities:
+            e_type = raw.get("type", "").strip().capitalize()
+            name = raw.get("name", "").strip()
+            
+            if not e_type or not name:
                 continue
-            for entity_item in res["entities"]:
-                e_type = entity_item.get("type")
-                name = entity_item.get("name")
-                if not e_type or not name:
-                    continue   
-                e_type = e_type.strip().capitalize() 
-                name = name.strip()
-                key = (e_type, name)
-                
-                current_alts_input = entity_item.get("altNames")
-                current_alts = set()
-                if current_alts_input:
-                    if isinstance(current_alts_input, list):
-                        current_alts = set(str(a).strip() for a in current_alts_input if str(a).strip())
-                    else:
-                        current_alts = set([str(current_alts_input).strip()])
-                
-                if key not in merged_entities:
-                    merged_entities[key] = {
-                        "type": e_type,
-                        "name": name,
-                        "altNames": set(),
-                        "VisualTags": set(),    
-                        "IdentityTags": set(),   
-                        "ModifierTags": set()   
-                    }
-                
-                merged_entities[key]["altNames"].update(current_alts)
-                if "Character" in e_type:
-                    i_set = parse_tags_to_set(entity_item.get("IdentityTags"))
-                    m_set = parse_tags_to_set(entity_item.get("ModifierTags"))
-                    merged_entities[key]["IdentityTags"].update(i_set)
-                    merged_entities[key]["ModifierTags"].update(m_set)
+
+            # Parse Alts & Clean Generic Alts
+            raw_alts = raw.get("altNames", [])
+            current_alts = set()
+            if isinstance(raw_alts, list):
+                current_alts = {str(a).strip() for a in raw_alts if str(a).strip()}
+            elif isinstance(raw_alts, str):
+                current_alts = {raw_alts.strip()}
+            
+            # --- FILTER GENERIC ALTS ---
+            # ลบ altName ที่เป็นคำทั่วไป เช่น 'boy', 'man'
+            current_alts = {a for a in current_alts if a.lower() not in GENERIC_NAMES}
+
+            # --- FILTER MAIN NAME ---
+            # ถ้าชื่อหลักเป็นคำทั่วไป (เช่น 'Boy') พยายามหาชื่ออื่นใน altNames มาแทน
+            if name.lower() in GENERIC_NAMES:
+                if len(current_alts) > 0:
+                    # ถ้ามี altName ดีๆ ให้เอามาใช้เป็นชื่อหลักแทน แล้วลบออกจาก set
+                    # เลือกชื่อที่ยาวที่สุดน่าจะดีกว่า (เช่นเลือก 'Fat Boy' แทน 'Boy')
+                    best_name = max(current_alts, key=len) 
+                    name = best_name
+                    current_alts.remove(best_name)
                 else:
-                    v_set = parse_tags_to_set(entity_item.get("VisualTags"))
-                    merged_entities[key]["VisualTags"].update(v_set)
+                    # ถ้าไม่มีชื่ออื่นเลย และชื่อหลักเป็น Generic -> ทิ้งตัวนี้ไปเลย
+                    print(f"⚠️ Skipped generic entity: {name}")
+                    continue
+
+            # Parse Tags
+            i_tags = parse_tags_to_set(raw.get("IdentityTags"))
+            m_tags = parse_tags_to_set(raw.get("ModifierTags"))
+            v_tags = parse_tags_to_set(raw.get("VisualTags"))
+
+            current_compare_set = {name.lower()} | {a.lower() for a in current_alts}
+
+            match_found = False
+            for existing in merged_list:
+                if existing["type"] != e_type:
+                    continue
+                
+                existing_compare_set = {existing["name"].lower()} | {a.lower() for a in existing["altNames"]}
+                
+                if not current_compare_set.isdisjoint(existing_compare_set):
+                    match_found = True
                     
-        for key, data in merged_entities.items():
-            data["altNames"] = sorted(list(data["altNames"]))
+                    if name.lower() != existing["name"].lower():
+                        # ถ้าชื่อใหม่ไม่ใช่ Generic ให้เอาไปเก็บ (Logic นี้อาจต้องปรับตามหน้างาน)
+                        if name.lower() not in GENERIC_NAMES:
+                             existing["altNames"].add(name)
+                             
+                    existing["altNames"].update(current_alts)
+                    existing["IdentityTags"].update(i_tags)
+                    existing["ModifierTags"].update(m_tags)
+                    existing["VisualTags"].update(v_tags)
+                    break
+            
+            if not match_found:
+                merged_list.append({
+                    "type": e_type,
+                    "name": name,
+                    "altNames": current_alts,
+                    "IdentityTags": i_tags,
+                    "ModifierTags": m_tags,
+                    "VisualTags": v_tags
+                })
+
+        for data in merged_list:
+            main_name_lower = data["name"].lower()
+            data["altNames"] = {a for a in data["altNames"] if a.lower() != main_name_lower}
+            
+            formatted_data = {
+                "type": data["type"],
+                "name": data["name"],
+                "altNames": sorted(list(data["altNames"]))
+            }
+
             e_type_lower = data["type"].lower()
             if "character" in e_type_lower:
-                data["IdentityTags"] = ", ".join(sorted(list(data["IdentityTags"])))
-                data["ModifierTags"] = ", ".join(sorted(list(data["ModifierTags"])))
-                data.pop("VisualTags", None) 
-                final_output["characters"].append(data)
+                formatted_data["IdentityTags"] = ", ".join(sorted(list(data["IdentityTags"])))
+                formatted_data["ModifierTags"] = ", ".join(sorted(list(data["ModifierTags"])))
+                final_output["characters"].append(formatted_data)
             else:
-                data["VisualTags"] = ", ".join(sorted(list(data["VisualTags"])))
-                data.pop("IdentityTags", None)
-                data.pop("ModifierTags", None)
-                
+                formatted_data["VisualTags"] = ", ".join(sorted(list(data["VisualTags"])))
                 if "location" in e_type_lower:
-                    final_output["locations"].append(data)
+                    final_output["locations"].append(formatted_data)
                 else:
-                    final_output["items"].append(data)
+                    final_output["items"].append(formatted_data)
+
         print(f"Extract Entities Time: {time.perf_counter() - start:.3f} seconds")
+
         try:
             saved_status = save_extraction_result(session, chapter_id, final_output)
             if saved_status:
+                print("✅ Data successfully saved/updated in Database.")
+                
                 session.refresh(chapter_obj)
                 if not chapter_obj.isExtracted:
                     chapter_obj.isExtracted = True
                     session.add(chapter_obj)
                     session.commit()
+                    print("✅ Updated chapter.isExtracted to True.")
             else:
                 print("⚠️ Failed to save data to Database.")
         except Exception as e:
-            print(f"❌ Error saving to database: {e}")    
+            print(f"❌ Error saving to database: {e}")
+            
     else:
-        print(f"skip")
+        print(f"⚠️ Chapter {chapter_id} is already extracted. Skipping extraction logic, proceeding to image checks.")
         final_output["status"] = "skipped_extraction"
+
     if current_movie_id:
+        print("💤 Sleeping 1 sec before image generation...")
         await asyncio.sleep(1)
         try:
             generate_images_for_missing_refpaths(session, current_movie_id)

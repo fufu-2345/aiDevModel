@@ -10,7 +10,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select, create_engine, SQLModel 
 import httpx
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 from dotenv import load_dotenv 
 
 # --- STABLE DIFFUSION IMPORTS ---
@@ -19,7 +19,6 @@ from diffusers import (
     AutoPipelineForInpainting, 
     StableDiffusionXLPipeline, 
     StableDiffusionPipeline,
-    # เพิ่ม Pipeline เฉพาะทางสำหรับโหลด Single File
     StableDiffusionXLInpaintPipeline,
     StableDiffusionInpaintPipeline
 )
@@ -80,6 +79,24 @@ router = APIRouter(
     tags=["createPic"]
 )
 
+GENERIC_NAMES = {
+    "man", "woman", "boy", "girl", "child", "kid", "baby", "children",
+    "uncle", "aunt", "father", "mother", "dad", "mom", "parent", "parents",
+    "brother", "sister", "grandfather", "grandmother", "grandpa", "grandma",
+    "stranger", "villager", "person", "people", "someone", "nobody", "anybody",
+    "friend", "enemy", "everyone", "master", "disciple", "teacher", "student",
+    "he", "she", "him", "her", "they", "them", "it", "that", "this"
+}
+
+def parse_tags_to_set(tags_input):
+    if not tags_input:
+        return set()
+    if isinstance(tags_input, str):
+        return set(t.strip() for t in tags_input.split(',') if t.strip())
+    if isinstance(tags_input, list):
+        return set(str(t).strip() for t in tags_input if str(t).strip())
+    return set()
+
 @router.on_event("startup")
 def on_startup():
     try:
@@ -92,22 +109,21 @@ def on_startup():
 # ==========================================
 
 OUTPUT_DIR = "public/storage/pic/"
-CHAR_DIR = "public/storage/characters/" # 📂 โฟลเดอร์เก็บรูปตัวละคร (ตาม id)
+CHAR_DIR = "public/storage/characters/" # 📂 โฟลเดอร์เก็บรูปตัวละคร
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# 📉 ลดความละเอียดลงเล็กน้อยเพื่อประหยัด RAM (สำหรับ CPU 16GB)
+# 📉 ลดความละเอียดลงเล็กน้อยเพื่อประหยัด RAM
 IMG_WIDTH = 768
 IMG_HEIGHT = 512
+NUM_STEPS = 20 # ✅ ลดเหลือ 20 Steps ตามที่ขอ
 
 # AI Models Configuration
 ollamaURL = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api/generate")
 ollamaModel = os.getenv("OLLAMA_MODEL", "gemma3:12b")
 
 # --- SDXL Configuration ---
-# stabilityModel = "diffusers/stable-diffusion-xl-1.0-inpainting-0.1"
 stabilityModel = "C:\\stability matrix\\Data\\Models\\StableDiffusion\\juggernautXL_ragnarokBy.safetensors"
 
-# IP Adapter สำหรับ SDXL (ViT-H Version)
 IP_ADAPTER_REPO = "h94/IP-Adapter" 
 IP_ADAPTER_SUBFOLDER = "sdxl_models"
 IP_ADAPTER_FILENAME = "ip-adapter-plus-face_sdxl_vit-h.bin"
@@ -117,17 +133,12 @@ IP_ADAPTER_FILENAME = "ip-adapter-plus-face_sdxl_vit-h.bin"
 # ==========================================
 
 def clean_prompt(text):
-    """ล้างขยะออกจาก Prompt (เช่น [], {}, ', ")"""
     if isinstance(text, list):
         text = ", ".join(text)
     if not isinstance(text, str):
         return ""
-    
-    # ลบ json syntax ที่อาจหลงเหลือ
     text = re.sub(r"[\[\]\{\}\"']", "", text)
-    # ลบ key-value ที่อาจติดมา เช่น style: ...
     text = re.sub(r"\w+\s*:\s*", "", text)
-    # ลบช่องว่างซ้ำๆ
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
@@ -146,26 +157,37 @@ def flush_memory():
         torch.cuda.empty_cache()
 
 async def wait_for_memory(threshold=85):
-    """รอให้ RAM ลดลงต่ำกว่า threshold ก่อนทำงานต่อ"""
+    """
+    รอให้ RAM ลดลงต่ำกว่า threshold
+    เพิ่ม Logic การรอแบบ Exponential Backoff เพื่อไม่ให้ Spam Log
+    """
     if not psutil: return
-    
     print("   ⏳ Checking Memory...")
-    for _ in range(30): # รอสูงสุด 30 วินาที
+    
+    # ถ้า RAM เกิน 90% ให้รอนานหน่อยก่อนเช็คครั้งแรก
+    if log_memory_usage("Pre-Check") > 90:
+        print("   ⚠️ Critical RAM usage detected. Waiting 10s for OS cleanup...")
+        await asyncio.sleep(10)
+        flush_memory()
+
+    for i in range(10): # ลองเช็ค 10 รอบ (รอบละ 3-5 วินาที)
         mem_percent = log_memory_usage("Check")
         if mem_percent < threshold:
             print("   ✅ Memory safe.")
             return
         
-        print(f"   ⚠️ RAM high ({mem_percent}%), waiting and cleaning...")
+        print(f"   ⚠️ RAM high ({mem_percent}%), waiting and cleaning... (Attempt {i+1}/10)")
         flush_memory()
-        await asyncio.sleep(2)
-    print("   ⚠️ Proceeding despite high RAM (Timeout waiting).")
+        await asyncio.sleep(3)
+        
+    print("   ⚠️ Proceeding despite high RAM (Timeout waiting). Good luck.")
 
 async def unload_ollama_model(client: httpx.AsyncClient):
     print("   ⬇️ Force Unloading Ollama...")
     try:
         await client.post(ollamaURL, json={"model": ollamaModel, "keep_alive": 0})
-        await asyncio.sleep(3) 
+        # รอเพิ่มอีกนิดเพื่อให้มั่นใจว่า process ตายจริง
+        await asyncio.sleep(5) 
         print("   ✅ Ollama Unloaded.")
     except Exception as e:
         print(f"   ⚠️ Failed to unload Ollama: {e}")
@@ -180,28 +202,19 @@ def load_image_pipe():
         torch_dtype = torch.float32
         print("   ⚠️ CUDA NOT Detected! Using CPU with float32.")
     
-    # --- ปรับปรุง Logic การเลือก Pipeline ให้รองรับ Single File ---
     is_single_file = stabilityModel.endswith(".safetensors") or stabilityModel.endswith(".ckpt")
     is_xl = "xl" in stabilityModel.lower()
 
     if is_single_file:
-        if is_xl:
-            PipelineClass = StableDiffusionXLInpaintPipeline
-            print("   Using StableDiffusionXLInpaintPipeline (Single File)")
-        else:
-            PipelineClass = StableDiffusionInpaintPipeline
-            print("   Using StableDiffusionInpaintPipeline (Single File)")
+        PipelineClass = StableDiffusionXLInpaintPipeline if is_xl else StableDiffusionInpaintPipeline
     else:
         PipelineClass = AutoPipelineForInpainting
-        print("   Using AutoPipelineForInpainting")
 
     print(f"Loading Model: {stabilityModel} (dtype={torch_dtype})")
     
-    # --- โหลด Image Encoder แบบ Offline First ---
     image_encoder = None
     print("   Loading Image Encoder...")
     
-    # 1. ลองโหลดจาก Cache (h94)
     try:
         image_encoder = CLIPVisionModelWithProjection.from_pretrained(
             "h94/IP-Adapter", 
@@ -211,7 +224,6 @@ def load_image_pipe():
         )
         print("   ✅ Loaded ViT-H from local cache.")
     except Exception:
-        # 2. ถ้าไม่มีใน Cache ให้ลองโหลดใหม่
         try:
             print("   ⬇️ Downloading ViT-H from HuggingFace...")
             image_encoder = CLIPVisionModelWithProjection.from_pretrained(
@@ -219,25 +231,16 @@ def load_image_pipe():
                 subfolder="models/image_encoder", 
                 torch_dtype=torch_dtype
             )
-        except Exception as e1:
-            print(f"   ⚠️ Failed to load h94 ViT-H: {e1}")
+        except Exception as e:
+            print(f"   ⚠️ Failed to load h94 ViT-H: {e}")
             try:
                 image_encoder = CLIPVisionModelWithProjection.from_pretrained(
                     "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
-                    torch_dtype=torch_dtype,
-                    local_files_only=True
+                    torch_dtype=torch_dtype
                 )
-                print("   ✅ Loaded LAION ViT-H from local cache.")
-            except Exception:
-                try:
-                    image_encoder = CLIPVisionModelWithProjection.from_pretrained(
-                        "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
-                        torch_dtype=torch_dtype
-                    )
-                except Exception as e2:
-                    print(f"   ❌ Critical: Failed to load Image Encoder: {e2}")
+            except Exception as e2:
+                print(f"   ❌ Critical: Failed to load Image Encoder: {e2}")
 
-    # --- โหลด Pipeline ---
     try:
         if is_single_file:
                 pipe = PipelineClass.from_single_file(
@@ -268,7 +271,6 @@ def load_image_pipe():
     if hasattr(pipe, "safety_checker"): pipe.safety_checker = None
     if hasattr(pipe, "requires_safety_checker"): pipe.requires_safety_checker = False
     
-    # 📉 Optimization for Low RAM
     try: pipe.enable_vae_slicing()
     except: pass
     try: pipe.enable_vae_tiling() 
@@ -285,7 +287,6 @@ def load_image_pipe():
 def get_mask_coordinates(position_keyword, width=IMG_WIDTH, height=IMG_HEIGHT):
     p = position_keyword.upper()
     margin_top = int(height * 0.15) 
-    
     if "LEFT" in p: return (0, margin_top, width // 2, height)
     elif "RIGHT" in p: return (width // 2, margin_top, width, height)
     elif "CENTER" in p: return (width // 4, margin_top, (width * 3) // 4, height)
@@ -296,9 +297,8 @@ def get_mask_coordinates(position_keyword, width=IMG_WIDTH, height=IMG_HEIGHT):
 # ==========================================
 
 async def analyze_scene_plan(chunk_text: str, client: httpx.AsyncClient):
-    await wait_for_memory(threshold=85) 
+    # ไม่ต้องรอ RAM นานมากตรงนี้ เพราะเราจะรัน Ollama รวดเดียวแล้วค่อย unload
     
-    # 🇨🇳 Prompt สั่ง Ollama ให้ตอบสั้นๆ (Concise Keywords)
     prompt = f"""
     Role: AI Visual Director.
     Task: Create a VERY SHORT, keyword-based Visual Prompt for Stable Diffusion.
@@ -333,17 +333,13 @@ async def analyze_scene_plan(chunk_text: str, client: httpx.AsyncClient):
         "options": {"temperature": 0.3, "num_ctx": 4096}
     }
 
-    print(f"   [Ollama] Requesting {ollamaURL} (Model: {ollamaModel})...")
+    print(f"   [Ollama] Analyzing text...")
 
     try:
         response = await client.post(ollamaURL, json=payload, timeout=300.0)
         response.raise_for_status() 
         result_text = response.json().get("response", "")
         
-        # 🔍 Debug: Print Raw Response
-        print(f"   🤖 LLM Raw Response: {result_text[:200]}...")
-
-        # 🧹 Clean Markdown code blocks (```json ... ```)
         clean_json = re.sub(r'```json\s*', '', result_text)
         clean_json = re.sub(r'```', '', clean_json)
         
@@ -364,16 +360,15 @@ async def analyze_scene_plan(chunk_text: str, client: httpx.AsyncClient):
 
 def find_character_refpath(session: Session, movie_id: int, name_query: str) -> Optional[str]:
     """
-    ค้นหา Path รูปตัวละครจากชื่อ
-    1. หาใน DB (refpath)
-    2. ถ้าไม่เจอหรือว่าง ให้ลองหาจาก ID ใน public/storage/characters/{id}.png
+    ค้นหา Path รูปตัวละคร โดยดูทั้งจาก DB และ Folder ID
     """
     if not name_query: return None
     name_query = name_query.strip()
 
-    # ฟังก์ชันช่วยเช็คว่าไฟล์มีจริงไหม
     def validate_path(p):
-        if p and os.path.exists(p): return p
+        if p and os.path.exists(p): 
+            print(f"      ✅ Found: {os.path.abspath(p)}")
+            return p
         return None
 
     # 1. ค้นหาจากชื่อหลัก
@@ -383,10 +378,8 @@ def find_character_refpath(session: Session, movie_id: int, name_query: str) -> 
     )).first()
 
     if char:
-        # A. ลองใช้ refpath ใน DB
         if res := validate_path(char.refpath): return res
         
-        # B. ลองใช้ path ตาม ID (public/storage/characters/ID.png)
         id_path_png = os.path.join(CHAR_DIR, f"{char.id}.png")
         if res := validate_path(id_path_png): return res
         
@@ -400,7 +393,6 @@ def find_character_refpath(session: Session, movie_id: int, name_query: str) -> 
     )).first()
 
     if alt_char:
-        # ใช้ Logic เดียวกันกับข้างบน แต่ใช้ ID ของ alt_char (ซึ่งคือ instance ของ character)
         if res := validate_path(alt_char.refpath): return res
         
         id_path_png = os.path.join(CHAR_DIR, f"{alt_char.id}.png")
@@ -416,6 +408,7 @@ def find_character_refpath(session: Session, movie_id: int, name_query: str) -> 
 # ==========================================
 
 def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_path: str):
+    # ฟังก์ชันนี้ถูกเรียกหลังจากเคลียร์ RAM แล้ว
     log_memory_usage("Start Gen SD") 
     print(f"🎨 Generating: {output_path}")
     
@@ -425,10 +418,7 @@ def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_pa
     
     env_desc = clean_prompt(scene_plan.get('environment', 'scene'))
     
-    # 🧧 Forced Style Prompts (ลดให้สั้นลง)
     STYLE_PROMPT = "Ancient Chinese Xianxia, Wuxia, Hanfu, dynasty era, sharp focus"
-    
-    # 🚫 Negative Prompt (ลดให้สั้นลง แต่ยังครอบคลุม)
     NEGATIVE_PROMPT = "modern, western, low quality, ugly, deformed, blurry"
 
     # จัดการตัวละคร
@@ -437,7 +427,6 @@ def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_pa
         ref_path = find_character_refpath(session, movie_id, name)
         action = clean_prompt(char_info.get('visual_action', ''))
         
-        # เพิ่ม 'wearing hanfu' ซ้ำอีกรอบเพื่อความชัวร์
         if "hanfu" not in action.lower() and "robe" not in action.lower():
             action += ", wearing Hanfu"
 
@@ -448,17 +437,13 @@ def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_pa
                 "position": char_info.get('position', 'CENTER'),
                 "prompt": f"{STYLE_PROMPT}, {action}, {name}, masterpiece"
             })
-            print(f"   ✅ Found ref for {name}: {ref_path}")
         else:
-            # เก็บ Prompt ตัวละครไว้ใส่หน้าสุด
             character_prompts.append(f"{name} {action}")
             print(f"   ⚠️ No ref for {name}, adding to text prompt.")
 
-    # 🛑 ตรวจสอบว่ามีตัวละครไหม
     if not people_to_gen and not character_prompts:
         print("   ⚠️ WARNING: No characters detected in scene plan! (Background only)")
 
-    # 🟢 Construct Base Prompt (สั้นกระชับ):
     full_character_prompt = ", ".join(character_prompts)
     
     parts = [STYLE_PROMPT]
@@ -482,7 +467,6 @@ def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_pa
         
         pipe.set_ip_adapter_scale(0.0)
         
-        # ใช้พื้นหลังสีเทา + Strength 1.0
         init_bg = Image.new("RGB", (width, height), (128, 128, 128)) 
         init_mask = Image.new("L", (width, height), "white") 
         dummy_ref = Image.new("RGB", (224, 224), "black")
@@ -495,11 +479,12 @@ def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_pa
             mask_image=init_mask, 
             ip_adapter_image=dummy_ref, 
             height=height, width=width, 
-            num_inference_steps=25,
+            num_inference_steps=NUM_STEPS, 
             strength=1.0, 
             guidance_scale=7.5 
         ).images[0]
 
+        # --- Inpainting Characters (Patching) ---
         for p in people_to_gen:
             print(f"   👤 Inpainting Character: {p.get('name')} at {p['position']}")
             
@@ -507,6 +492,9 @@ def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_pa
             mask = Image.new("L", (width, height), 0)
             draw = ImageDraw.Draw(mask)
             draw.rectangle(coords, fill=255)
+            
+            # ✅ BLUR MASK
+            mask = mask.filter(ImageFilter.GaussianBlur(radius=20))
             
             ref_image = Image.open(p['refpath']).convert("RGB")
             
@@ -517,8 +505,25 @@ def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_pa
                 image=base_image,
                 mask_image=mask,
                 ip_adapter_image=ref_image,
-                num_inference_steps=25,
+                num_inference_steps=NUM_STEPS, 
                 strength=0.9, 
+                guidance_scale=7.5
+            ).images[0]
+
+        # --- ✅ FINAL BLENDING PASS ---
+        if people_to_gen:
+            print("   🎨 Final blending pass...")
+            pipe.set_ip_adapter_scale(0.0) 
+            final_blend_mask = Image.new("L", (width, height), "white") 
+            
+            base_image = pipe(
+                prompt=base_prompt,
+                negative_prompt=NEGATIVE_PROMPT,
+                image=base_image,   
+                mask_image=final_blend_mask,
+                ip_adapter_image=dummy_ref,
+                num_inference_steps=NUM_STEPS,
+                strength=0.15,
                 guidance_scale=7.5
             ).images[0]
 
@@ -536,7 +541,7 @@ def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_pa
         log_memory_usage("After Cleanup")
 
 # ==========================================
-# 7. MAIN ENDPOINT
+# 7. MAIN ENDPOINT (BATCHING VERSION)
 # ==========================================
 
 @router.get("/generate-images/{chapter_id}")
@@ -554,31 +559,44 @@ async def generate_images_for_chapter(
     movie_id = chapter_info.movieId
 
     success_count = 0
-    
+    tasks_to_process = [] # เก็บงานที่จะทำ (chunk, plan)
+
     async with httpx.AsyncClient(timeout=120.0) as client:
+        # --- PHASE 1: PLANNING (Ollama Only) ---
+        print("🔵 [PHASE 1] Analyzing all chunks with Ollama...")
         for chunk in chunks:
             if chunk.picRef:
                 print(f"Skipping Chunk {chunk.chunkNumber}: Already exists.")
                 continue
 
-            print(f"--- Processing Chunk {chunk.chunkNumber} ---")
-            
-            await wait_for_memory(threshold=85)
-
+            print(f"--- Analyzing Chunk {chunk.chunkNumber} ---")
             scene_plan = await analyze_scene_plan(chunk.chunkDetail, client)
             
-            if not scene_plan:
-                print("Failed to analyze scene. Skipping.")
-                continue
-            
-            await unload_ollama_model(client)
-            flush_memory()
-            
-            await wait_for_memory(threshold=85)
+            if scene_plan:
+                tasks_to_process.append((chunk, scene_plan))
+            else:
+                print(f"Skipping Chunk {chunk.chunkNumber}: Analysis failed.")
 
+        # --- TRANSITION: CLEANUP ---
+        if not tasks_to_process:
+            return {"status": "completed", "message": "No new chunks to process."}
+
+        print("🟡 [TRANSITION] Unloading Ollama and clearing RAM...")
+        await unload_ollama_model(client)
+        flush_memory()
+        
+        # รอให้ RAM ว่างจริงๆ ก่อนโหลด SDXL
+        await wait_for_memory(threshold=85)
+
+        # --- PHASE 2: GENERATION (SDXL Only) ---
+        print("🟢 [PHASE 2] Generating Images with Stable Diffusion...")
+        for chunk, scene_plan in tasks_to_process:
+            print(f"--- Generating Chunk {chunk.chunkNumber} ---")
+            
             filename = f"ch{chapter_id}_chunk{chunk.chunkNumber}_{int(time.time())}.png"
             full_path = os.path.join(OUTPUT_DIR, filename)
             
+            # รัน SDXL แบบต่อเนื่อง (ไม่ต้องโหลด/unload ทุกรอบ เพราะเราเคลียร์ที่ไว้แล้ว)
             is_generated = await asyncio.to_thread(
                 run_sd_pipeline, 
                 scene_plan, 
@@ -592,6 +610,9 @@ async def generate_images_for_chapter(
                 session.add(chunk)
                 session.commit()
                 success_count += 1
+                
+                # Cleanup เบาๆ ระหว่างรูป
+                flush_memory() 
             else:
                 print("Failed to generate image.")
 
