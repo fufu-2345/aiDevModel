@@ -8,6 +8,7 @@ class movieTitle(SQLModel, table=True):
     episodeAmount: int = Field(default=0)                    
     picPath: str = Field(default="")
     status: str = Field(default="ready")
+    
     chapters: List["chapterContent"] = Relationship(back_populates="movie")
     characters: List["character"] = Relationship(back_populates="movie")
     entities: List["entity"] = Relationship(back_populates="movie")
@@ -22,14 +23,19 @@ class chapterContent(SQLModel, table=True):
     vdoPath: str = Field(default="")               
     movieId: Optional[int] = Field(default=None, foreign_key="movietitle.id")
     isExtracted: bool = Field(default=False)
+    
     movie: Optional[movieTitle] = Relationship(back_populates="chapters")
+    chunks: List["chunkContent"] = Relationship(back_populates="chapter")
 
 class chunkContent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     chunkNumber: int 
-    chunkDetail: str = Field(default="")   
+    chunkDetail: str = Field(default="")      # เก็บ Chunk ภาษาไทย (มี overlap)
+    chunkDetailEng: str = Field(default="")   # เก็บ Chunk ภาษาอังกฤษ (แปลแล้ว)
     picRef: str = Field(default="")
     chapterId: Optional[int] = Field(default=None, foreign_key="chaptercontent.id")
+    
+    chapter: Optional[chapterContent] = Relationship(back_populates="chunks")
 
 class entity(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -38,6 +44,7 @@ class entity(SQLModel, table=True):
     visual_tags: str = Field(default="")
     movieId: Optional[int] = Field(default=None, foreign_key="movietitle.id")
     refpath: str = Field(default="")
+    
     movie: Optional[movieTitle] = Relationship(back_populates="entities")
     altNames: List["altEntity"] = Relationship(back_populates="entity")
 
@@ -45,6 +52,7 @@ class altEntity(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     altName: str = Field(sa_column=Column("altName", Text))
     entityId: Optional[int] = Field(default=None, foreign_key="entity.id")
+    
     entity: Optional["entity"] = Relationship(back_populates="altNames")
 
 class character(SQLModel, table=True):
@@ -55,6 +63,7 @@ class character(SQLModel, table=True):
     ModifierTags: str = Field(default="")
     movieId: Optional[int] = Field(default=None, foreign_key="movietitle.id")
     refpath: str = Field(default="")
+    
     movie: Optional[movieTitle] = Relationship(back_populates="characters")
     altNames: List["altCharacter"] = Relationship(back_populates="character")
 
@@ -62,4 +71,5 @@ class altCharacter(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     altName: str = Field(sa_column=Column("altName", Text))
     entityId: Optional[int] = Field(default=None, foreign_key="character.id")
+    
     character: Optional["character"] = Relationship(back_populates="altNames")

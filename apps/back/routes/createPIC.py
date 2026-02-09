@@ -79,24 +79,6 @@ router = APIRouter(
     tags=["createPic"]
 )
 
-GENERIC_NAMES = {
-    "man", "woman", "boy", "girl", "child", "kid", "baby", "children",
-    "uncle", "aunt", "father", "mother", "dad", "mom", "parent", "parents",
-    "brother", "sister", "grandfather", "grandmother", "grandpa", "grandma",
-    "stranger", "villager", "person", "people", "someone", "nobody", "anybody",
-    "friend", "enemy", "everyone", "master", "disciple", "teacher", "student",
-    "he", "she", "him", "her", "they", "them", "it", "that", "this"
-}
-
-def parse_tags_to_set(tags_input):
-    if not tags_input:
-        return set()
-    if isinstance(tags_input, str):
-        return set(t.strip() for t in tags_input.split(',') if t.strip())
-    if isinstance(tags_input, list):
-        return set(str(t).strip() for t in tags_input if str(t).strip())
-    return set()
-
 @router.on_event("startup")
 def on_startup():
     try:
