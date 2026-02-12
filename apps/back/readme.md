@@ -1,20 +1,14 @@
 window: "dev": ".\\.venv\\Scripts\\python.exe -m uvicorn main:app --reload --port 8000"  
-linux:  "dev": "./.venv/bin/python -m uvicorn main:app --reload --port 8000"  
-  
-# Create venv  
-uv venv  
+linux: "dev": "./.venv/bin/python -m uvicorn main:app --reload --port 8000"
 
+# Create venv
 
-<!-- Shorten and Translate the following Thai text into English, return only the translated text.  
-  
-Source Text:  
-{text} -->
+uv venv
 
+upload -> extract -> gen -> done
 
+extract:  
+http://127.0.0.1:8000/extractEntities/{chapterID}
 
-
-gemma3 12B (for loop slice by "\n" -> gg translate -> gemma -> output)
-Summarize the entire plot of this in one long sentence, return only one sentence.
-
-Source Text:
-{text}
+gen ภาพ:  
+http://127.0.0.1:8000/createPic/generate-images/{chapter_id}

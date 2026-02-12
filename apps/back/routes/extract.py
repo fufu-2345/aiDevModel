@@ -23,14 +23,14 @@ router = APIRouter(
 
 # --- Configuration ---
 ollamaURL = "http://localhost:11434/api/generate"
-extractModel = "scb10x/typhoon2.1-gemma3-12b:latest"
+extractModel = "gemma3:12b" # อัปเดต Model ตามที่ต้องการ
 
 # Image Generation Config
 stabilityModel = "stabilityai/stable-diffusion-xl-base-1.0" 
 loraPath = r"C:\stability matrix\Data\Models\Lora\ClothingAdjuster3.safetensors" 
 
 # Limits
-MAX_TAGS = 15 # จำกัดจำนวน Tag สูงสุดต่อประเภท เพื่อป้องกัน Prompt ยาวเกินไป
+MAX_TAGS = 20 # ปรับกลับเป็น 20 ตามที่ต้องการ
 
 # Blocklist: คำทั่วไปที่ไม่ควรเป็นชื่อตัวละคร
 GENERIC_NAMES = {
@@ -39,7 +39,14 @@ GENERIC_NAMES = {
     "brother", "sister", "grandfather", "grandmother", "grandpa", "grandma",
     "stranger", "villager", "person", "people", "someone", "nobody", "anybody",
     "friend", "enemy", "everyone", "master", "disciple", "teacher", "student",
-    "he", "she", "him", "her", "they", "them", "it", "that", "this"
+    "he", "she", "him", "her", "they", "them", "it", "that", "this", "i",
+    "idiot", "fool", "bastard", "brat", "stupid", "crazy", "madman", "monster",
+    "demon", "devil", "god", "immortal", "cultivator", "sect master", "elder",
+    "senior", "junior", "fellow", "daoist", "clueless", "son of a bitch",
+    "shixiong", "shidi", "shijie", "shimei", "boss", "chief", "leader",
+    "younger brother", "older brother", "big brother", "little brother",
+    "younger sister", "older sister", "big sister", "little sister",
+    "third uncle", "second uncle", "fourth uncle" 
 }
 
 # --- Helper Functions ---
@@ -147,8 +154,25 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                 
                 desc = limited_desc if limited_desc else "character"
                 
-                prompt = f"ancient chinese style, {desc}, front view, head and shoulders portrait, looking directly at camera, passport photo style, neutral expression, soft studio lighting, evenly lit face, no shadows on face, bright, high quality, sharp focus, simple white background"
-                negative_prompt = "shadows, harsh lighting, cinematic lighting, hands, hands on face, distorted face, profile view, looking away, busy background, blurry, low quality, nsfw"
+                # --- Prompt Engineering (Character) ---
+                # Positive: เน้นหน้าตรง พื้นหลังขาว ไม่มีเงา แสงสตูดิโอ (Reference Sheet Style)
+                prompt = (
+                    f"ancient chinese style, {desc}, front view, head and shoulders portrait, "
+                    f"looking directly at camera, passport photo style, neutral expression, "
+                    f"soft studio lighting, evenly lit face, no shadows on face, bright, "
+                    f"high quality, sharp focus, simple white background"
+                )
+                
+                # Negative: ห้าม 18+ ห้ามเงา ห้ามมุมข้าง
+                negative_prompt = (
+                    "nsfw, nude, naked, 18+, sexual, erotic, porn, hentai, "
+                    "boobs, cleavage, nipples, genitals, penis, vagina, sex, "
+                    "shadows, harsh lighting, hands, hands on face, distorted face, "
+                    "profile view, looking away, busy background, blurry, low quality, "
+                    "worst quality, bad anatomy, deformed, malformed, mutation, "
+                    "extra limbs, missing limbs, floating limbs, disconnected limbs, "
+                    "lowres, low resolution, jpeg artifacts, dark, dim, monochromatic, grayscale"
+                )
                 
                 print(f"Generating Character: {char_obj.name}...")
                 image = pipeline(
@@ -179,11 +203,33 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                 e_type_lower = ent_obj.type.lower()
                 
                 if "item" in e_type_lower:
-                    prompt = f"ancient chinese style object, {desc}, product photography, centered shot, isolated on white background, studio lighting, soft shadows, high detail, 8k, sharp focus, realistic texture, professional lighting"
-                    negative_prompt = "human, hands, holding, fingers, person, messy background, text, watermark, blurry, low quality, distortion, nsfw, cropped, out of frame"
+                    # Positive: Product shot, white bg
+                    prompt = (
+                        f"ancient chinese style object, {desc}, product photography, centered shot, "
+                        f"isolated on white background, studio lighting, soft shadows, high detail, "
+                        f"8k, sharp focus, realistic texture, professional lighting"
+                    )
+                    # Negative
+                    negative_prompt = (
+                        "nsfw, nude, naked, 18+, human, hands, holding, fingers, person, "
+                        "messy background, text, watermark, blurry, low quality, distortion, "
+                        "cropped, out of frame, worst quality, lowres, low resolution, "
+                        "jpeg artifacts, off-center, multiple views, split screen, bad lighting"
+                    )
                 else: # Location
-                    prompt = f"ancient chinese architecture, {desc}, establishing shot, wide angle view, highly detailed, realistic, 8k, cinematic lighting, depth of field, interior design, atmosphere, sharp focus"
-                    negative_prompt = "people, crowd, humans, animals, text, watermark, blurry, low quality, distortion, simple background, white background, flat lighting"
+                    # Positive: Wide angle, clean
+                    prompt = (
+                        f"ancient chinese architecture, {desc}, establishing shot, wide angle view, "
+                        f"highly detailed, realistic, 8k, cinematic lighting, depth of field, "
+                        f"interior design, atmosphere, sharp focus"
+                    )
+                    # Negative
+                    negative_prompt = (
+                        "nsfw, nude, naked, 18+, people, crowd, humans, animals, text, watermark, "
+                        "blurry, low quality, distortion, simple background, white background, "
+                        "flat lighting, worst quality, lowres, low resolution, "
+                        "jpeg artifacts, close up, macro"
+                    )
 
                 print(f"Generating Entity ({ent_obj.type}): {ent_obj.name}...")
                 image = pipeline(
@@ -296,11 +342,12 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
     Extract Entity information (Character, Location, Item) from the Input Text into a valid JSON format.
 
     Rules:
-    1. "IdentityTags": Fixed physical traits (hair color, eye color, race, gender).
-    2. "ModifierTags": Changeable traits (clothing, emotions, dirt, poses).
+    1. "IdentityTags": Physical appearance traits (face, body, hair, eyes, skin, age). Format as comma-separated Stable Diffusion tags.
+    2. "ModifierTags": Clothing, outfit, accessories, and current state. Format as comma-separated Stable Diffusion tags.
     3. Use the "first appearance" for changing traits.
     4. Tags must be nouns/adjectives only. No verbs.
     5. English output only.
+    6. "gender": Identify as Male, Female, or Unknown.
 
     Output JSON Format:
     {{
@@ -308,6 +355,7 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
             {{
                 "type": "Character",
                 "name": "Name",
+                "gender": "Male",
                 "altNames": [],
                 "IdentityTags": "tag1, tag2",
                 "ModifierTags": "tag1, tag2"
@@ -340,12 +388,14 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
         response = await client.post(ollamaURL, json=payload)
         response.raise_for_status()
         result_text = response.json().get("response", "")
+        # ใช้ Regex หา JSON block
         match = re.search(r'\{.*\}', result_text, re.DOTALL)
         if match:
             json_str = match.group(0)
             try:
                 return json.loads(json_str)
             except json.JSONDecodeError:
+                # ลองซ่อม JSON แบบง่ายๆ (แก้ trailing commas)
                 try:
                     corrected = re.sub(r',\s*([\]}])', r'\1', json_str)
                     return json.loads(corrected)
@@ -379,17 +429,12 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
     }
 
     if not chapter_obj.isExtracted:
-        
-        # --- STEP 1: Chunking & Translating & Saving to DB ---
         chunks_eng = await create_and_save_chunks(session, chapter_obj)
-
         results = []
         
-        # --- STEP 2: LLM Extraction ---
         async with httpx.AsyncClient(timeout=1800.0) as client:
             for idx, chunk_text in enumerate(chunks_eng):
                 print(f"Extracting entities from chunk {idx+1}/{len(chunks_eng)}...")
-                
                 res = await processChunk(chunk_text, client, extractModel) 
                 if res:
                     results.append(res)
@@ -397,10 +442,9 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                     print(f"Chunk {idx+1} Failed Extraction")
 
         # ----------------------------------------------------------------
-        # STEP 3: SMART MERGE LOGIC (In-place) with GENERIC NAME FILTER
+        # STRICT SMART MERGE LOGIC
         # ----------------------------------------------------------------
         merged_list = []
-        
         all_raw_entities = []
         for res in results:
             if res and "entities" in res:
@@ -409,7 +453,6 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
         for raw in all_raw_entities:
             e_type = raw.get("type", "").strip().capitalize()
             name = raw.get("name", "").strip()
-            
             if not e_type or not name:
                 continue
 
@@ -420,8 +463,12 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
             elif isinstance(raw_alts, str):
                 current_alts = {raw_alts.strip()}
             
+            gender = raw.get("gender", "Unknown").strip().capitalize()
+            
+            # Filter generic alts
             current_alts = {a for a in current_alts if a.lower() not in GENERIC_NAMES}
 
+            # Filter generic main name
             if name.lower() in GENERIC_NAMES:
                 if len(current_alts) > 0:
                     best_name = max(current_alts, key=len) 
@@ -435,35 +482,59 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
             m_tags = parse_tags_to_set(raw.get("ModifierTags"))
             v_tags = parse_tags_to_set(raw.get("VisualTags"))
 
-            current_compare_set = {name.lower()} | {a.lower() for a in current_alts}
-
+            current_name_lower = " ".join(name.lower().split())
+            
             match_found = False
             for existing in merged_list:
                 if existing["type"] != e_type:
                     continue
                 
-                existing_compare_set = {existing["name"].lower()} | {a.lower() for a in existing["altNames"]}
+                existing_name_lower = " ".join(existing["name"].lower().split())
+                existing_alts_lower = {" ".join(a.lower().split()) for a in existing["altNames"]}
                 
-                if not current_compare_set.isdisjoint(existing_compare_set):
+                is_name_match = current_name_lower == existing_name_lower
+                is_new_in_old_alts = current_name_lower in existing_alts_lower
+                current_alts_lower = {" ".join(a.lower().split()) for a in current_alts}
+                is_old_in_new_alts = existing_name_lower in current_alts_lower
+                is_substring = (current_name_lower in existing_name_lower or existing_name_lower in current_name_lower) \
+                               and len(current_name_lower) > 3 and len(existing_name_lower) > 3
+
+                if is_name_match or is_new_in_old_alts or is_old_in_new_alts or is_substring:
                     match_found = True
                     
                     if name.lower() != existing["name"].lower():
                         if name.lower() not in GENERIC_NAMES:
                              existing["altNames"].add(name)
-                             
+                    
+                    if existing["name"].lower() in GENERIC_NAMES and name.lower() not in GENERIC_NAMES:
+                        existing["altNames"].add(existing["name"])
+                        existing["name"] = name
+                    elif len(name) > len(existing["name"]) and name.lower() not in GENERIC_NAMES:
+                         if existing["name"].lower() in name.lower():
+                             existing["altNames"].add(existing["name"])
+                             existing["name"] = name
+
                     existing["altNames"].update(current_alts)
-                    # Tags: ไม่ Merge เพิ่มตามที่ User ต้องการ (ยึดอันแรก)
+                    
+                    if existing["gender"] == "Unknown" and gender != "Unknown":
+                        existing["gender"] = gender
                     break
             
             if not match_found:
-                merged_list.append({
+                new_entry = {
                     "type": e_type,
                     "name": name,
                     "altNames": current_alts,
                     "IdentityTags": i_tags,
                     "ModifierTags": m_tags,
                     "VisualTags": v_tags
-                })
+                }
+                if "Character" in e_type:
+                    new_entry["gender"] = gender
+                else:
+                    new_entry["gender"] = "Unknown"
+                    
+                merged_list.append(new_entry)
 
         for data in merged_list:
             main_name_lower = data["name"].lower()
@@ -477,10 +548,10 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
 
             e_type_lower = data["type"].lower()
             if "character" in e_type_lower:
-                # Limit tags here for Output/DB
                 i_list = sorted(list(data["IdentityTags"]))[:MAX_TAGS]
                 m_list = sorted(list(data["ModifierTags"]))[:MAX_TAGS]
                 
+                formatted_data["gender"] = data.get("gender", "Unknown")
                 formatted_data["IdentityTags"] = ", ".join(i_list)
                 formatted_data["ModifierTags"] = ", ".join(m_list)
                 final_output["characters"].append(formatted_data)
@@ -519,8 +590,7 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
         print("💤 Sleeping 1 sec before image generation...")
         await asyncio.sleep(1)
         try:
-            print(session, current_movie_id)
-            # generate_images_for_missing_refpaths(session, current_movie_id)
+            generate_images_for_missing_refpaths(session, current_movie_id)
         except Exception as e:
             print(f"❌ Error during image generation: {e}")
 

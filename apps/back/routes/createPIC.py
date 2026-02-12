@@ -10,7 +10,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select, create_engine, SQLModel 
 import httpx
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter # ✅ เพิ่ม ImageFilter เพื่อเบลอขอบ
 from dotenv import load_dotenv 
 
 # --- STABLE DIFFUSION IMPORTS ---
@@ -218,10 +218,18 @@ def load_image_pipe():
             try:
                 image_encoder = CLIPVisionModelWithProjection.from_pretrained(
                     "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
-                    torch_dtype=torch_dtype
+                    torch_dtype=torch_dtype,
+                    local_files_only=True
                 )
-            except Exception as e2:
-                print(f"   ❌ Critical: Failed to load Image Encoder: {e2}")
+                print("   ✅ Loaded LAION ViT-H from local cache.")
+            except Exception:
+                try:
+                    image_encoder = CLIPVisionModelWithProjection.from_pretrained(
+                        "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
+                        torch_dtype=torch_dtype
+                    )
+                except Exception as e2:
+                    print(f"   ❌ Critical: Failed to load Image Encoder: {e2}")
 
     try:
         if is_single_file:
@@ -269,6 +277,7 @@ def load_image_pipe():
 def get_mask_coordinates(position_keyword, width=IMG_WIDTH, height=IMG_HEIGHT):
     p = position_keyword.upper()
     margin_top = int(height * 0.15) 
+    
     if "LEFT" in p: return (0, margin_top, width // 2, height)
     elif "RIGHT" in p: return (width // 2, margin_top, width, height)
     elif "CENTER" in p: return (width // 4, margin_top, (width * 3) // 4, height)
@@ -279,8 +288,9 @@ def get_mask_coordinates(position_keyword, width=IMG_WIDTH, height=IMG_HEIGHT):
 # ==========================================
 
 async def analyze_scene_plan(chunk_text: str, client: httpx.AsyncClient):
-    # ไม่ต้องรอ RAM นานมากตรงนี้ เพราะเราจะรัน Ollama รวดเดียวแล้วค่อย unload
+    await wait_for_memory(threshold=85) 
     
+    # 🇨🇳 Prompt สั่ง Ollama ให้ตอบสั้นๆ (Concise Keywords)
     prompt = f"""
     Role: AI Visual Director.
     Task: Create a VERY SHORT, keyword-based Visual Prompt for Stable Diffusion.
@@ -552,7 +562,14 @@ async def generate_images_for_chapter(
                 continue
 
             print(f"--- Analyzing Chunk {chunk.chunkNumber} ---")
-            scene_plan = await analyze_scene_plan(chunk.chunkDetail, client)
+            
+            # ✅ ใช้ chunkDetailEng ตามที่ระบุ ถ้าไม่มีให้ Fallback เป็น chunkDetail
+            text_to_analyze = chunk.chunkDetailEng if chunk.chunkDetailEng else chunk.chunkDetail
+            if not text_to_analyze:
+                print(f"Skipping Chunk {chunk.chunkNumber}: No text content found.")
+                continue
+
+            scene_plan = await analyze_scene_plan(text_to_analyze, client)
             
             if scene_plan:
                 tasks_to_process.append((chunk, scene_plan))

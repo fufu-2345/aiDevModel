@@ -30,8 +30,9 @@ class chapterContent(SQLModel, table=True):
 class chunkContent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     chunkNumber: int 
-    chunkDetail: str = Field(default="")      # เก็บ Chunk ภาษาไทย (มี overlap)
-    chunkDetailEng: str = Field(default="")   # เก็บ Chunk ภาษาอังกฤษ (แปลแล้ว)
+    chunkDetail: str = Field(default="")      # Chunk thai (ไม่มี overlap)
+    chunkDetailEng: str = Field(default="")   # Chunk eng (มี overlap)
+    analyzed: str = Field(default="") 
     picRef: str = Field(default="")
     chapterId: Optional[int] = Field(default=None, foreign_key="chaptercontent.id")
     

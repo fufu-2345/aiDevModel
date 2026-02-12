@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from typing import List
 from database import get_session 
-from models import movieTitle, chapterContent 
+from models import movieTitle, chapterContent, chunkContent
 from pydantic import BaseModel
 
 router = APIRouter(
@@ -65,3 +65,22 @@ def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
     return chapter
+
+# get chunksContent.chunkDetail
+@router.get("/chapters/{chapter_id}/chunks-summary")
+def get_chunks_summary(chapter_id: int, session: Session = Depends(get_session)):
+    # 1. ตรวจสอบก่อนว่า Chapter นี้มีตัวตนไหม (Optional แต่แนะนำ)
+    chapter = session.get(chapterContent, chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+
+    # 2. Select เฉพาะ chunkContent ที่มี chapterId ตรงกัน
+    # เรียงลำดับตาม chunkNumber เพื่อความระเบียบ
+    statement = select(chunkContent).where(chunkContent.chapterId == chapter_id).order_by(chunkContent.chunkNumber)
+    chunks = session.exec(statement).all()
+
+    # 3. สร้าง Dictionary โดยใช้ Dictionary Comprehension
+    # { "เลข chunk": "รายละเอียด" }
+    result = {str(chunk.chunkNumber): chunk.chunkDetail for chunk in chunks}
+
+    return result
