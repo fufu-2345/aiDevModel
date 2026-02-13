@@ -22,7 +22,7 @@ from database import create_db_and_tables, get_session
 from models import movieTitle, chapterContent, chunkContent, character, altCharacter, entity, altEntity
 # from PIL import Image, ImageDraw
 # OUTPUT_DIR = "public/storage/pic"
-from routes import movies, uploadPDF, createPic, extract
+from routes import movies, uploadPDF, createPic, extract, sound
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -57,6 +57,7 @@ app.include_router(movies.router)
 app.include_router(uploadPDF.router)
 app.include_router(createPic.router)
 app.include_router(extract.router)
+app.include_router(sound.router)
 
 def load_image_pipe():
     device = "cuda" if torch.cuda.is_available() else "cpu"

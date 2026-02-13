@@ -12,3 +12,6 @@ http://127.0.0.1:8000/extractEntities/{chapterID}
 
 gen ภาพ:  
 http://127.0.0.1:8000/createPic/generate-images/{chapter_id}
+
+extract เสียง:
+http://127.0.0.1:8000/sound/{chapter_id}/analysis
