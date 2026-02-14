@@ -32,7 +32,7 @@ stabilityModel = "stabilityai/stable-diffusion-xl-base-1.0"
 # Limits
 MAX_TAGS = 20 
 
-# Blocklist: คำทั่วไปที่ไม่ควรเป็นชื่อตัวละคร
+# Blocklist: คำทั่วไปที่ไม่ควรเป็นชื่อตัวละคร (เพิ่ม first, second, third...)
 GENERIC_NAMES = {
     "man", "woman", "boy", "girl", "child", "kid", "baby", "children",
     "uncle", "aunt", "father", "mother", "dad", "mom", "parent", "parents",
@@ -46,7 +46,15 @@ GENERIC_NAMES = {
     "shixiong", "shidi", "shijie", "shimei", "boss", "chief", "leader",
     "younger brother", "older brother", "big brother", "little brother",
     "younger sister", "older sister", "big sister", "little sister",
-    "third uncle", "second uncle", "fourth uncle" 
+    "third uncle", "second uncle", "fourth uncle",
+    "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth",
+    "number one", "number two", "number three"
+}
+
+# Blocklist: Tag ที่ไม่มีประโยชน์ในการ Gen ภาพ หรือซ้ำซ้อนกับ Gender
+BANNED_TAGS = {
+    "person", "unknown", "man", "woman", "male", "female", "boy", "girl", 
+    "human", "character", "someone", "people"
 }
 
 # --- Helper Functions ---
@@ -84,7 +92,6 @@ def load_image_pipe():
             use_safetensors=True
         )
 
-    # ปิดตัวช่วยความปลอดภัยเพื่อความเร็ว (Optional)
     if hasattr(pipe, "safety_checker"):
         pipe.safety_checker = None
     if hasattr(pipe, "requires_safety_checker"):
@@ -133,11 +140,11 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
         # Loop สร้างภาพ Characters
         for char_obj in chars_to_gen:
             try:
-                # Prepare Tags: Split, Clean, and Deduplicate (Preserving Order)
+                # Prepare Tags
                 i_tags_list = [t.strip() for t in char_obj.IdentityTags.split(',') if t.strip()]
                 m_tags_list = [t.strip() for t in char_obj.ModifierTags.split(',') if t.strip()]
                 
-                # Combine and Remove Duplicates
+                # Combine and Deduplicate
                 combined_tags = i_tags_list + m_tags_list
                 seen = set()
                 deduped_tags = []
@@ -146,12 +153,10 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                         deduped_tags.append(t)
                         seen.add(t.lower())
                 
-                # Limit to MAX_TAGS (15)
                 limited_desc = ", ".join(deduped_tags[:MAX_TAGS])
                 desc = limited_desc if limited_desc else "character"
                 
                 # --- Prompt Engineering (Character) ---
-                # Positive: เน้นยืนนิ่ง มือเปล่า แขนแนบลำตัว คนเดียว
                 prompt = (
                     f"ancient chinese style, {desc}, full body shot, standing still, "
                     f"arms at sides, empty hands, looking directly at camera, "
@@ -159,7 +164,6 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                     f"high quality, simple white background, solo, single person"
                 )
                 
-                # Negative: เพิ่ม holding object, multiple people
                 negative_prompt = (
                     "shadows, harsh lighting, cropped, cinematic lighting, hands on face, "
                     "distorted face, profile view, looking away, busy background, blurry, "
@@ -186,13 +190,10 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
             except Exception as e:
                 print(f"❌ Error generating character {char_obj.name}: {e}")
 
-        # Loop สร้างภาพ Entities (Items/Locations)
+        # Loop สร้างภาพ Entities
         for ent_obj in ents_to_gen:
             try:
-                # Limit Visual Tags
                 v_tags_list = [t.strip() for t in ent_obj.visual_tags.split(',') if t.strip()]
-                
-                # Deduplicate
                 seen = set()
                 deduped_tags = []
                 for t in v_tags_list:
@@ -201,30 +202,25 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                         seen.add(t.lower())
 
                 desc = ", ".join(deduped_tags[:MAX_TAGS])
-                
                 e_type_lower = ent_obj.type.lower()
                 
                 if "item" in e_type_lower:
-                    # Positive: Product shot, white bg
                     prompt = (
                         f"ancient chinese style object, {desc}, product photography, centered shot, "
                         f"isolated on white background, studio lighting, soft shadows, high detail, "
                         f"8k, sharp focus, realistic texture, professional lighting"
                     )
-                    # Negative
                     negative_prompt = (
                         "nsfw, nude, naked, 18+, human, hands, holding, fingers, person, "
                         "messy background, text, watermark, blurry, low quality, distortion, "
                         "cropped, out of frame, worst quality"
                     )
-                else: # Location
-                    # Positive: Wide angle, clean
+                else: 
                     prompt = (
                         f"ancient chinese architecture, {desc}, establishing shot, wide angle view, "
                         f"highly detailed, realistic, 8k, cinematic lighting, depth of field, "
                         f"interior design, atmosphere, sharp focus"
                     )
-                    # Negative
                     negative_prompt = (
                         "nsfw, nude, naked, 18+, people, crowd, humans, animals, text, watermark, "
                         "blurry, low quality, distortion, simple background, white background, "
@@ -251,7 +247,6 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                 print(f"❌ Error generating entity {ent_obj.name}: {e}")
                 
     finally:
-        # Cleanup Memory
         print("🧹 Cleaning up model from memory...")
         if pipeline:
             del pipeline
@@ -275,9 +270,6 @@ async def translate_text(text: str) -> str:
     return text 
 
 async def create_and_save_chunks(session: Session, chapter: chapterContent):
-    """
-    แบ่ง Chunk -> แปลภาษา -> Save ลง DB -> Return English Chunks
-    """
     print(f"Creating chunks for Chapter {chapter.id}...")
     
     existing_chunks = session.exec(select(chunkContent).where(chunkContent.chapterId == chapter.id)).all()
@@ -292,45 +284,34 @@ async def create_and_save_chunks(session: Session, chapter: chapterContent):
     OVERLAP = 1          
     step = LINES_PER_CHUNK - OVERLAP
     
-    raw_chunks_data = [] # เก็บ Tuple (thai_no_overlap, thai_overlap)
+    raw_chunks_data = [] 
     
     if total_lines <= LINES_PER_CHUNK:
-        # กรณีสั้นมาก มีแค่ 1 chunk
         raw_chunks_data.append((chapter.chapterDetail, chapter.chapterDetail))
     else: 
         for i in range(0, total_lines, step):
-            # 1. ส่วน Overlap (สำหรับส่งแปล/AI) - ครอบคลุม 5 บรรทัด
+            # 1. ส่วน Overlap (สำหรับ AI)
             chunk_lines_overlap = lines[i : i + LINES_PER_CHUNK]
-            
-            # Logic เดิม: ถ้าเหลือน้อยกว่า 3 บรรทัด และไม่ใช่ chunk แรก ให้ break (เศษเหลือ)
             if len(chunk_lines_overlap) < 3 and len(raw_chunks_data) > 0:
                 break 
-            
             text_overlap = "\n".join(chunk_lines_overlap)
             
-            # 2. ส่วน No Overlap (สำหรับ DB/Display) - ครอบคลุม 4 บรรทัด (ตาม step)
-            # ต้องระวัง Chunk สุดท้ายให้เก็บส่วนที่เหลือทั้งหมด
-            
+            # 2. ส่วน No Overlap (สำหรับ DB)
             next_start_idx = i + step
             is_last_chunk = False
-            
-            # เช็คว่ารอบถัดไปจะหลุด loop หรือโดน break หรือไม่
             if next_start_idx >= total_lines:
                 is_last_chunk = True
             else:
                 next_chunk_lines = lines[next_start_idx : next_start_idx + LINES_PER_CHUNK]
-                if len(next_chunk_lines) < 3: # ถ้าตัวถัดไปสั้นเกิน มันจะ break loop แปลว่าตัวนี้คือตัวสุดท้าย
+                if len(next_chunk_lines) < 3: 
                     is_last_chunk = True
             
             if is_last_chunk:
-                # ถ้าเป็นตัวสุดท้าย เก็บยาวไปจนจบไฟล์เลย เพื่อไม่ให้เนื้อหาขาด
                 chunk_lines_no_overlap = lines[i:]
             else:
-                # ถ้าไม่ใช่ตัวสุดท้าย เก็บแค่ตาม Step (4 บรรทัด) เพื่อให้ต่อกับตัวถัดไปพอดี
                 chunk_lines_no_overlap = lines[i : i + step]
             
             text_no_overlap = "\n".join(chunk_lines_no_overlap)
-            
             raw_chunks_data.append((text_no_overlap, text_overlap))
 
     print(f"Processing Chapter {chapter.id}: Found {len(raw_chunks_data)} chunks.")
@@ -340,20 +321,18 @@ async def create_and_save_chunks(session: Session, chapter: chapterContent):
     for idx, (thai_no_overlap, thai_overlap) in enumerate(raw_chunks_data):
         print(f"Processing chunk {idx+1}/{len(raw_chunks_data)}...")
 
-        # แปลเฉพาะส่วนที่มี Overlap (เพื่อบริบท AI)
+        # แปลเฉพาะส่วนที่มี Overlap
         eng_text = await translate_text(thai_overlap)
         final_eng_chunks.append(eng_text)
         
-        # Save ลง DB
         new_chunk = chunkContent(
             chunkNumber = idx + 1,
-            chunkDetail = thai_no_overlap,  # ภาษาไทย (No Overlap - ต่อกันเนียน)
-            chunkDetailEng = eng_text,      # ภาษาอังกฤษ (With Overlap - บริบทครบ)
+            chunkDetail = thai_no_overlap,  # No Overlap
+            chunkDetailEng = eng_text,      # With Overlap
             picRef = None,           
             chapterId = chapter.id
         )
         session.add(new_chunk)
-        
         await asyncio.sleep(0.5) 
 
     session.commit()
@@ -414,7 +393,6 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
         response = await client.post(ollamaURL, json=payload)
         response.raise_for_status()
         result_text = response.json().get("response", "")
-        # ใช้ Regex หา JSON block
         match = re.search(r'\{.*\}', result_text, re.DOTALL)
         if match:
             json_str = match.group(0)
@@ -501,12 +479,22 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                     print(f"⚠️ Skipped generic entity: {name}")
                     continue
 
+            # CLEAN TAGS (Remove Banned, Dedupe)
             i_tags = parse_tags_to_set(raw.get("IdentityTags"))
             m_tags = parse_tags_to_set(raw.get("ModifierTags"))
             v_tags = parse_tags_to_set(raw.get("VisualTags"))
+            
+            i_tags = {t for t in i_tags if t.lower() not in BANNED_TAGS}
+            m_tags = {t for t in m_tags if t.lower() not in BANNED_TAGS}
+            # Remove tags in Modifier that are also in Identity
+            m_tags = {t for t in m_tags if t.lower() not in {it.lower() for it in i_tags}}
 
             current_name_lower = " ".join(name.lower().split())
             
+            # Note: Removed gender extraction from raw since user reverted prompt
+            # Will default to "Unknown" if not in prompt, or use existing if merging
+            gender = "Unknown" 
+
             match_found = False
             for existing in merged_list:
                 if existing["type"] != e_type:
@@ -515,12 +503,14 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                 existing_name_lower = " ".join(existing["name"].lower().split())
                 existing_alts_lower = {" ".join(a.lower().split()) for a in existing["altNames"]}
                 
+                # --- STRICT MERGE RULES ---
                 is_name_match = current_name_lower == existing_name_lower
                 is_new_in_old_alts = current_name_lower in existing_alts_lower
                 current_alts_lower = {" ".join(a.lower().split()) for a in current_alts}
                 is_old_in_new_alts = existing_name_lower in current_alts_lower
+                # Substring check with stricter length > 5
                 is_substring = (current_name_lower in existing_name_lower or existing_name_lower in current_name_lower) \
-                               and len(current_name_lower) > 3 and len(existing_name_lower) > 3
+                               and len(current_name_lower) > 5 and len(existing_name_lower) > 5
 
                 if is_name_match or is_new_in_old_alts or is_old_in_new_alts or is_substring:
                     match_found = True
@@ -539,10 +529,12 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
 
                     existing["altNames"].update(current_alts)
                     
-                    # RE-ADD TAG MERGING
+                    # Merge Tags
                     existing["IdentityTags"].update(i_tags)
                     existing["ModifierTags"].update(m_tags)
                     existing["VisualTags"].update(v_tags)
+                    
+                    # Gender merge logic removed as gender is not in prompt anymore
                     break
             
             if not match_found:
@@ -554,6 +546,11 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                     "ModifierTags": m_tags,
                     "VisualTags": v_tags
                 }
+                if "Character" in e_type:
+                    new_entry["gender"] = gender
+                else:
+                    new_entry["gender"] = "Unknown"
+                    
                 merged_list.append(new_entry)
 
         for data in merged_list:
@@ -568,11 +565,27 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
 
             e_type_lower = data["type"].lower()
             if "character" in e_type_lower:
-                i_list = sorted(list(data["IdentityTags"]))[:MAX_TAGS]
-                m_list = sorted(list(data["ModifierTags"]))[:MAX_TAGS]
+                # LIMIT TAGS
+                i_list = sorted(list(data["IdentityTags"]))
+                m_list = sorted(list(data["ModifierTags"]))
                 
-                formatted_data["IdentityTags"] = ", ".join(i_list)
-                formatted_data["ModifierTags"] = ", ".join(m_list)
+                final_i_tags = []
+                final_m_tags = []
+                current_count = 0
+                
+                for t in i_list:
+                    if current_count < MAX_TAGS:
+                        final_i_tags.append(t)
+                        current_count += 1
+                
+                for t in m_list:
+                    if current_count < MAX_TAGS:
+                        final_m_tags.append(t)
+                        current_count += 1
+                
+                formatted_data["gender"] = data.get("gender", "Unknown")
+                formatted_data["IdentityTags"] = ", ".join(final_i_tags)
+                formatted_data["ModifierTags"] = ", ".join(final_m_tags)
                 final_output["characters"].append(formatted_data)
             else:
                 v_list = sorted(list(data["VisualTags"]))[:MAX_TAGS]
