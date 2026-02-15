@@ -112,12 +112,25 @@ IP_ADAPTER_FILENAME = "ip-adapter-plus-face_sdxl_vit-h.bin"
 # ==========================================
 
 def clean_prompt(text):
+    """แปลงประโยคให้เป็น Tag สั้นๆ"""
     if isinstance(text, list): text = ", ".join(text)
     if not isinstance(text, str): return ""
+    
+    # ลบสัญลักษณ์พิเศษ
     text = re.sub(r"[\[\]\{\}\"']", "", text)
     text = re.sub(r"\w+\s*:\s*", "", text)
+    
+    # ลบคำเชื่อมภาษาอังกฤษ (Stop words) เพื่อให้เป็น Tag
+    stop_words = [" a ", " an ", " the ", " is ", " are ", " with ", " on ", " in ", " of ", " to "]
+    for word in stop_words:
+        text = text.replace(word, ", ")
+        
+    # จัดระเบียบ comma และ space
     text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    text = re.sub(r",\s*,", ",", text)
+    text = text.strip().strip(",")
+    
+    return text
 
 def log_memory_usage(label=""):
     if psutil:
@@ -134,7 +147,6 @@ def flush_memory():
 async def wait_for_memory(threshold=85):
     if not psutil: return
     print("   ⏳ Checking Memory...")
-    # ถ้า RAM แน่นมาก รอ 10 วิ
     if log_memory_usage("Pre-Check") > 90:
         await asyncio.sleep(10)
         flush_memory()
@@ -167,7 +179,6 @@ def load_image_pipe():
         torch_dtype = torch.float32
         print("   ⚠️ CUDA NOT Detected! Using CPU float32.")
     
-    # Logic เลือก Pipeline
     is_single_file = stabilityModel.endswith(".safetensors") or stabilityModel.endswith(".ckpt")
     is_xl = "xl" in stabilityModel.lower()
 
@@ -178,8 +189,9 @@ def load_image_pipe():
 
     print(f"Loading Model: {stabilityModel}")
     
-    # 1. Load Image Encoder (ViT-H)
     image_encoder = None
+    print("   Loading Image Encoder...")
+    
     try:
         image_encoder = CLIPVisionModelWithProjection.from_pretrained(
             "h94/IP-Adapter", 
@@ -202,7 +214,6 @@ def load_image_pipe():
                 torch_dtype=torch_dtype
             )
 
-    # 2. Load Pipeline
     try:
         if is_single_file:
                 pipe = PipelineClass.from_single_file(
@@ -229,7 +240,6 @@ def load_image_pipe():
 
     if hasattr(pipe, "safety_checker"): pipe.safety_checker = None
     
-    # RAM Optimization
     try: pipe.enable_vae_slicing()
     except: pass
     try: pipe.enable_vae_tiling() 
@@ -243,49 +253,68 @@ def load_image_pipe():
 
     return pipe
 
-# ✅ แก้ไข: เพิ่มกรณี BACKGROUND ให้ชัดเจนขึ้น
-def get_mask_coordinates(position_keyword, width, height):
+def get_mask_coordinates_smart(position_keyword, depth, width, height):
     p = position_keyword.upper()
+    d = depth.upper() 
     
-    # เว้นขอบบน 30% (ให้เห็นฟ้า/หลังคา/หัวไม่ขาด)
-    # เว้นขอบล่าง 5% (ให้ยืนบนพื้น)
-    top_margin = int(height * 0.30)
-    bottom_margin = int(height * 0.05)
+    # Scale ตามระยะ (ลดขนาดลงอีกนิดไม่ให้ล้นเฟรม)
+    if "FORE" in d: 
+        scale_h = 0.80 
+        scale_w = 0.35 
+        y_start_ratio = 0.15 
+    elif "MID" in d: 
+        scale_h = 0.55 
+        scale_w = 0.25 
+        y_start_ratio = 0.35 
+    else: # BACK
+        scale_h = 0.35 
+        scale_w = 0.15 
+        y_start_ratio = 0.45 
+
+    char_h = int(height * scale_h)
+    char_w = int(width * scale_w)
+    top_y = int(height * y_start_ratio)
+    bottom_y = top_y + char_h
     
-    # ความสูงของ Mask คน
-    char_height = height - top_margin - bottom_margin
-    
-    # ความกว้างของ Mask คน (ประมาณ 1 ใน 3 ของภาพ)
-    char_width = int(width * 0.35)
-    
+    if bottom_y > height - 10: bottom_y = height - 10
+
     if "LEFT" in p:
-        return (20, top_margin, 20 + char_width, height - bottom_margin)
+        start_x = int(width * 0.1)
+        end_x = start_x + char_w
     elif "RIGHT" in p:
-        return (width - char_width - 20, top_margin, width - 20, height - bottom_margin)
-    elif "BACKGROUND" in p:
-        # ✅ Background: ให้อยู่ตรงกลางแต่กว้างกว่าและสูงกว่า (อยู่ข้างหลัง)
-        # หรือจะให้อยู่มุมไกลๆ ก็ได้ อันนี้ลองตั้งให้อยู่กึ่งกลางแต่เต็มพื้นที่กว่าเล็กน้อย
-        return (width // 4, int(height * 0.2), (width * 3) // 4, height - int(height * 0.2))
+        end_x = int(width * 0.9)
+        start_x = end_x - char_w
     else: # CENTER
         center_x = width // 2
-        return (center_x - (char_width // 2), top_margin, center_x + (char_width // 2), height - bottom_margin)
+        start_x = center_x - (char_w // 2)
+        end_x = center_x + (char_w // 2)
+
+    return (start_x, top_y, end_x, bottom_y)
 
 # ==========================================
 # 4. ANALYSIS & DB LOOKUP
 # ==========================================
 
 async def analyze_scene_plan(chunk_text: str, client: httpx.AsyncClient):
+    # ✅ สั่ง LLM ชัดเจนว่าขอ Keywords, Comma separated
     prompt = f"""
     Role: AI Visual Director.
-    Task: Create visual prompt.
+    Task: Create visual prompt tags for Stable Diffusion.
     Input Story: "{chunk_text}"
     Rules:
-    1. 'environment': Short keywords (max 10 words). Focus on visual style.
-    2. 'characters': List characters. Use names from text.
-    3. 'position': Assign [LEFT, CENTER, RIGHT, BACKGROUND].
-    4. 'visual_action': Short keywords for action/clothes. **Ancient Chinese Robes (Hanfu) only.**
+    1. 'environment': Keywords ONLY (comma separated). No sentences. Focus on visual style (e.g., "misty mountains, bamboo forest, ancient ruins").
+    2. 'characters': Extract names.
+    3. 'position': [LEFT, CENTER, RIGHT].
+    4. 'depth': [FOREGROUND, MID_GROUND, BACKGROUND].
+    5. 'visual_action': Keywords ONLY. Action + Clothing (e.g., "holding sword, green hanfu robe"). **Ancient Chinese Robes (Hanfu) only.**
 
-    Output JSON: {{ "environment": "...", "characters": [ {{ "name": "...", "position": "...", "visual_action": "..." }} ] }}
+    Output JSON: 
+    {{ 
+        "environment": "keyword1, keyword2, ...", 
+        "characters": [ 
+            {{ "name": "...", "position": "...", "depth": "MID_GROUND", "visual_action": "..." }} 
+        ] 
+    }}
     """
     
     try:
@@ -309,40 +338,32 @@ def find_character_refpath(session: Session, movie_id: int, name_query: str) -> 
 
     def validate_path(p):
         if p and os.path.exists(p): 
-            # 🔍 LOG: เจอไฟล์รูป
-            print(f"      ✅ Found Ref File: {os.path.abspath(p)}")
+            print(f"      ✅ Found Ref: {os.path.basename(p)}")
             return p
         return None
 
-    # Helper function to check ID paths
     def check_id_paths(char_id):
-        # 🔍 LOG: พยายามหาจาก ID
         p_png = os.path.join(CHAR_DIR, f"{char_id}.png")
         if res := validate_path(p_png): return res
-        
         p_jpg = os.path.join(CHAR_DIR, f"{char_id}.jpg")
         if res := validate_path(p_jpg): return res
         return None
 
-    # 1. Search Character Table
     char = session.exec(select(character).where(
         character.movieId == movie_id,
         character.name.ilike(f"%{name_query}%")
     )).first()
 
     if char:
-        print(f"      🔎 Matched Character DB: {char.name} (ID: {char.id})")
         if res := validate_path(char.refpath): return res
         if res := check_id_paths(char.id): return res
 
-    # 2. Search AltEntity (Nicknames)
     alt = session.exec(select(character).join(altCharacter).where(
         character.movieId == movie_id,
         altCharacter.altName.ilike(f"%{name_query}%")
     )).first()
 
     if alt:
-        print(f"      🔎 Matched AltName DB: Found {alt.name} (ID: {alt.id}) via '{name_query}'")
         if res := validate_path(alt.refpath): return res
         if res := check_id_paths(alt.id): return res
 
@@ -358,38 +379,37 @@ def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_pa
     
     width, height = IMG_WIDTH, IMG_HEIGHT
     people_to_gen = []
-    character_prompts = [] 
     
+    # ✅ 1. สร้าง Base Prompt (Environment Only)
+    # ไม่เอาคนไปใส่ใน Base Prompt แล้ว เพื่อประหยัด Token และไม่ให้ฉากหลังเพี้ยนเป็นคน
     env_desc = clean_prompt(scene_plan.get('environment', 'scene'))
     
     STYLE = "Ancient Chinese Xianxia, Wuxia, Hanfu, dynasty era, sharp focus"
-    NEG = "modern, western, low quality, ugly, deformed, blurry, deformed hands, missing limbs"
+    NEG = "modern, western, low quality, ugly, deformed, blurry, deformed hands, missing limbs, text, watermark"
 
+    # Base Prompt = Style + Environment + Quality
+    base_prompt = f"{STYLE}, {env_desc}, masterpiece, best quality, 4k"
+    print(f"   📝 Base Prompt (BG Only): {base_prompt[:100]}...")
+
+    # เตรียมข้อมูลคน (แต่ยังไม่ใส่ใน Prompt หลัก)
     for char_info in scene_plan.get('characters', []):
         name = char_info.get('name')
-        print(f"   🔍 Looking up ref for: {name}")
         ref_path = find_character_refpath(session, movie_id, name)
         action = clean_prompt(char_info.get('visual_action', ''))
         
         if "hanfu" not in action.lower(): action += ", wearing Hanfu"
+        full_action_prompt = f"{action}, full body shot"
+        
+        depth = char_info.get('depth', 'MID_GROUND') 
 
-        full_action_prompt = f"{action}, full body shot, standing on ground"
-
-        if ref_path:
-            people_to_gen.append({
-                "name": name,
-                "refpath": ref_path,
-                "position": char_info.get('position', 'CENTER'),
-                "prompt": f"{STYLE}, {full_action_prompt}, {name}, masterpiece"
-            })
-        else:
-            character_prompts.append(f"{name} {full_action_prompt}")
-            print(f"      ⚠️ No ref file found for {name}. Using text prompt only.")
-
-    # Base Prompt Construction
-    full_char_str = ", ".join(character_prompts)
-    base_prompt = f"{STYLE}, {full_char_str}, {env_desc}, masterpiece, 4k"
-    print(f"   📝 Base Prompt: {base_prompt[:150]}...")
+        people_to_gen.append({
+            "name": name,
+            "refpath": ref_path, # อาจเป็น None ได้
+            "position": char_info.get('position', 'CENTER'),
+            "depth": depth,
+            # Prompt เฉพาะตัวละคร
+            "prompt": f"{STYLE}, {full_action_prompt}, {name}, masterpiece"
+        })
 
     try:
         pipe = load_image_pipe()
@@ -397,14 +417,13 @@ def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_pa
         subfolder_arg = IP_ADAPTER_SUBFOLDER if IP_ADAPTER_SUBFOLDER else None
         
         pipe.load_ip_adapter(IP_ADAPTER_REPO, subfolder=subfolder_arg, weight_name=IP_ADAPTER_FILENAME)
-        pipe.set_ip_adapter_scale(0.0) # ปิดตอน Gen BG
+        pipe.set_ip_adapter_scale(0.0) 
         
-        # Init Images
         init_bg = Image.new("RGB", (width, height), (128, 128, 128)) 
         init_mask = Image.new("L", (width, height), "white") 
         dummy_ref = Image.new("RGB", (224, 224), "black")
 
-        # 1. Gen Background
+        # 1. Gen Background (ฉากเปล่าๆ หรือฉากที่มีคนลางๆ จาก Environment)
         print("   Generating Background...")
         base_image = pipe(
             prompt=base_prompt,
@@ -418,24 +437,36 @@ def run_sd_pipeline(scene_plan: dict, movie_id: int, session: Session, output_pa
             guidance_scale=7.5 
         ).images[0]
 
-        # 2. Inpaint Characters
+        # Sort: วาด Background -> Foreground
+        def depth_sort_key(p):
+            d = p['depth'].upper()
+            if "BACK" in d: return 0
+            if "MID" in d: return 1
+            return 2 
+        people_to_gen.sort(key=depth_sort_key)
+
+        # 2. Inpaint Characters (ทีละคน)
         for p in people_to_gen:
-            coords = get_mask_coordinates(p['position'], width, height)
-            print(f"   👤 Inpainting: {p.get('name')}")
-            print(f"      - Position: {p['position']} -> Coords: {coords}")
-            print(f"      - Image Ref: {p['refpath']}")
-            print(f"      - Prompt: {p['prompt'][:100]}...")
+            coords = get_mask_coordinates_smart(p['position'], p['depth'], width, height)
+            print(f"   👤 Inpainting: {p.get('name')} ({p['depth']})")
             
             mask = Image.new("L", (width, height), 0)
             draw = ImageDraw.Draw(mask)
             draw.rectangle(coords, fill=255)
-            mask = mask.filter(ImageFilter.GaussianBlur(radius=15))
             
-            ref_image = Image.open(p['refpath']).convert("RGB")
+            # ✅ Blur Mask ให้มากขึ้น (20 -> 25) เพื่อให้ขอบเนียน
+            mask = mask.filter(ImageFilter.GaussianBlur(radius=25))
             
-            pipe.set_ip_adapter_scale(0.7) # เปิด IP-Adapter
+            # ถ้ามีรูป Ref ให้ใช้ ถ้าไม่มีใช้ Dummy (แต่ปิด Scale เป็น 0 เองอัตโนมัติถ้าไม่มี Ref จริงๆ ก็ได้)
+            if p['refpath'] and os.path.exists(p['refpath']):
+                ref_image = Image.open(p['refpath']).convert("RGB")
+                pipe.set_ip_adapter_scale(0.7)
+            else:
+                ref_image = dummy_ref
+                pipe.set_ip_adapter_scale(0.0) # ปิด IP-Adapter ถ้าไม่มีรูป
+            
             base_image = pipe(
-                prompt=p['prompt'],
+                prompt=p['prompt'], # ใช้ Prompt เฉพาะตัวละคร
                 negative_prompt=NEG,
                 image=base_image,
                 mask_image=mask,

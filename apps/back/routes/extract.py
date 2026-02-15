@@ -92,6 +92,7 @@ def load_image_pipe():
             use_safetensors=True
         )
 
+    # ปิดตัวช่วยความปลอดภัยเพื่อความเร็ว (Optional)
     if hasattr(pipe, "safety_checker"):
         pipe.safety_checker = None
     if hasattr(pipe, "requires_safety_checker"):
@@ -140,11 +141,11 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
         # Loop สร้างภาพ Characters
         for char_obj in chars_to_gen:
             try:
-                # Prepare Tags
+                # Prepare Tags: Split, Clean, and Deduplicate (Preserving Order)
                 i_tags_list = [t.strip() for t in char_obj.IdentityTags.split(',') if t.strip()]
                 m_tags_list = [t.strip() for t in char_obj.ModifierTags.split(',') if t.strip()]
                 
-                # Combine and Deduplicate
+                # Combine and Remove Duplicates
                 combined_tags = i_tags_list + m_tags_list
                 seen = set()
                 deduped_tags = []
@@ -153,6 +154,7 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                         deduped_tags.append(t)
                         seen.add(t.lower())
                 
+                # Limit to MAX_TAGS
                 limited_desc = ", ".join(deduped_tags[:MAX_TAGS])
                 desc = limited_desc if limited_desc else "character"
                 
@@ -349,11 +351,13 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
     Extract Entity information (Character, Location, Item) from the Input Text into a valid JSON format.
 
     Rules:
-    1. "IdentityTags": Fixed physical traits (hair color, eye color, race, gender).
-    2. "ModifierTags": Changeable traits (clothing, emotions, dirt, poses).
+    1. "IdentityTags": Physical appearance ONLY (face, body, height, skin, hair, eyes, age). Use descriptive Stable Diffusion tags (e.g., tall, muscular, pale skin, rugged). Avoid generic terms like 'man', 'woman'.
+    2. "ModifierTags": Clothing, outfit, and accessories ONLY (e.g., black robe, armor, glasses). Format as comma-separated Stable Diffusion tags. Do NOT include actions, emotions, or non-clothing objects.
     3. Use the "first appearance" for changing traits.
     4. Tags must be nouns/adjectives only. No verbs.
     5. English output only.
+    6. "gender": Identify as Male, Female, or Unknown.
+    7. Distinction: Treat 'Second Brother' and 'Second Idiot' as separate characters. Do not combine them.
 
     Output JSON Format:
     {{
@@ -361,6 +365,7 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
             {{
                 "type": "Character",
                 "name": "Name",
+                "gender": "Male",
                 "altNames": [],
                 "IdentityTags": "tag1, tag2",
                 "ModifierTags": "tag1, tag2"
@@ -493,7 +498,7 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
             
             # Note: Removed gender extraction from raw since user reverted prompt
             # Will default to "Unknown" if not in prompt, or use existing if merging
-            gender = "Unknown" 
+            gender = raw.get("gender", "Unknown").strip().capitalize()
 
             match_found = False
             for existing in merged_list:
@@ -534,7 +539,8 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                     existing["ModifierTags"].update(m_tags)
                     existing["VisualTags"].update(v_tags)
                     
-                    # Gender merge logic removed as gender is not in prompt anymore
+                    if existing["gender"] == "Unknown" and gender != "Unknown":
+                        existing["gender"] = gender
                     break
             
             if not match_found:
