@@ -35,7 +35,8 @@ load_dotenv()
 # ================= CONFIG =================
 IMG_WIDTH = 768
 IMG_HEIGHT = 512
-NUM_STEPS = 20
+NUM_STEPS = 25 # ✅ แก้เป็น 25 (Background)
+CHAR_STEPS = 25 # ✅ แก้เป็น 25 (Character)
 
 # Model Paths
 ollamaURL = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api/generate")
@@ -194,29 +195,30 @@ class SDEngine:
             
             env_desc = clean_prompt(scene_plan.get('environment', 'scene'))
             STYLE = "masterpiece, best quality, photorealistic, 8k, raw photo, ancient chinese wuxia style"
-            NEG = "modern, western, low quality, ugly, blurry, watermark, text, bad anatomy"
+            # ✅ เพิ่มคำสั่งห้ามคน (people, humans, etc.) ลงใน Negative Prompt
+            NEG = "people, humans, person, man, woman, girl, boy, crowd, character, modern, western, low quality, ugly, blurry, watermark, text, bad anatomy, deformed face, faceless"
             
             base_prompt = f"{STYLE}, {env_desc}, no humans, empty scenery, masterpiece"
             
+            # ✅ FIX: สร้าง Dummy Reference (รูปดำ) เพื่อส่งให้ IP-Adapter
+            dummy_ref = Image.new("RGB", (224, 224), "black")
+
             # 1. Gen Background
             print("   Generating Background...")
-            # ✅ FIX: สร้าง Dummy Image เพื่อหลอก Model ให้ทำงาน
-            dummy_ref = Image.new("RGB", (224, 224), "black")
-            
             pipe.set_ip_adapter_scale(0.0)
             base_image = pipe(
                 prompt=base_prompt, negative_prompt=NEG,
                 image=Image.new("RGB", (IMG_WIDTH, IMG_HEIGHT), (128,128,128)),
                 mask_image=Image.new("L", (IMG_WIDTH, IMG_HEIGHT), "white"),
-                ip_adapter_image=dummy_ref,
-                # ✅ FIX: บังคับขนาดภาพเพื่อไม่ให้สเกลเพี้ยน
-                height=IMG_HEIGHT, width=IMG_WIDTH, 
-                num_inference_steps=NUM_STEPS, strength=1.0
+                ip_adapter_image=dummy_ref, 
+                height=IMG_HEIGHT, width=IMG_WIDTH, num_inference_steps=NUM_STEPS, strength=1.0
             ).images[0]
 
-            # 📸 DEBUG: Save Background Step
+            # 📸 SAVE: Background Step
             try:
-                base_image.save(output_path.replace(".png", "_step0_bg.png"))
+                step0_path = output_path.replace(".png", "_00_background.png")
+                base_image.save(step0_path)
+                print(f"      💾 Debug: {os.path.basename(step0_path)}")
             except: pass
 
             # 2. Paste Characters & Blend
@@ -227,7 +229,7 @@ class SDEngine:
                 name = char['name']
                 ref_path = char['ref_path']
                 
-                print(f"   👤 Processing: {name} ({char['depth']})")
+                print(f"   👤 Processing: {name} ({char['depth']}) | Ref: {os.path.basename(ref_path)}")
                 
                 # โหลดและตัดพื้นหลัง
                 char_img_rgba = self.process_character_image(ref_path)
@@ -248,7 +250,6 @@ class SDEngine:
                 base_image.paste(char_img_rgba, (paste_x, paste_y), char_img_rgba)
                 
                 # สร้าง Mask จาก Alpha Channel ของตัวละคร
-                # เพื่อให้ AI วาดแก้เฉพาะตรงตัวคน + ขอบๆ นิดหน่อย
                 char_mask = char_img_rgba.split()[-1] # เอา Alpha Channel
                 full_mask = Image.new("L", (IMG_WIDTH, IMG_HEIGHT), 0)
                 full_mask.paste(char_mask, (paste_x, paste_y))
@@ -257,31 +258,30 @@ class SDEngine:
                 full_mask = full_mask.filter(ImageFilter.GaussianBlur(radius=5)) # เบลอนิดเดียวพอ
                 
                 # Inpaint (Blending)
-                # ใช้ Strength ต่ำๆ เพื่อรักษาหน้าตาเดิม
-                # ใช้ IP-Adapter ช่วยคุมแสง
-                pipe.set_ip_adapter_scale(0.6) 
-                prompt = f"{STYLE}, {name}, {char['visual_action']}, masterpiece"
+                pipe.set_ip_adapter_scale(0.9)  # เพิ่มแรงดึงจากรูปต้นฉบับ
+                prompt = f"{STYLE}, {name}, {char['visual_action']}, highly detailed face, sharp eyes, detailed features, masterpiece"
                 
                 base_image = pipe(
                     prompt=prompt, negative_prompt=NEG,
                     image=base_image,
                     mask_image=full_mask,
                     ip_adapter_image=char_img_rgba.convert("RGB"), # ส่งรูปไปให้ดูแสง
-                    # ✅ FIX: บังคับขนาดภาพอีกครั้ง
                     height=IMG_HEIGHT, width=IMG_WIDTH,
-                    num_inference_steps=NUM_STEPS,
-                    strength=0.45, # ✅ Strength ต่ำๆ เน้นเกลี่ยแสง ไม่วาดหน้าใหม่
+                    num_inference_steps=CHAR_STEPS, # ✅ ใช้ 25 Steps เท่ากัน
+                    strength=0.35, 
                     guidance_scale=6.0
                 ).images[0]
 
-                # 📸 DEBUG: Save Step Image
+                # 📸 SAVE: Character Step
                 try:
                     safe_name = re.sub(r'[^a-zA-Z0-9]', '_', name)
-                    base_image.save(output_path.replace(".png", f"_step{i+1}_{safe_name}.png"))
+                    step_path = output_path.replace(".png", f"_{i+1:02d}_{safe_name}.png")
+                    base_image.save(step_path)
+                    print(f"      💾 Debug: {os.path.basename(step_path)}")
                 except: pass
 
             base_image.save(output_path)
-            print(f"✅ Saved: {output_path}")
+            print(f"✅ Final Saved: {output_path}")
             return True
             
         except Exception as e:

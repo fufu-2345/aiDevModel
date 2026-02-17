@@ -137,6 +137,8 @@ async def generate_images_for_chapter(
                 for char_info in scene_plan.get('characters', []):
                     ref_path = get_character_data(session, chapter_info.movieId, char_info['name'])
                     if ref_path:
+                        # ✅ เพิ่ม Log แสดงชื่อไฟล์รูป
+                        print(f"   ✅ Found Ref for {char_info['name']}: {os.path.basename(ref_path)}")
                         char_info['ref_path'] = ref_path
                         char_refs.append(char_info)
                     else:

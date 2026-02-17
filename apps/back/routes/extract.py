@@ -30,7 +30,7 @@ stabilityModel = "stabilityai/stable-diffusion-xl-base-1.0"
 # loraPath removed
 
 # Limits
-MAX_TAGS = 20 
+MAX_TAGS = 10 
 
 # Blocklist: คำทั่วไปที่ไม่ควรเป็นชื่อตัวละคร (เพิ่ม first, second, third...)
 GENERIC_NAMES = {
