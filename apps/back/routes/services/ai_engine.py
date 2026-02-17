@@ -16,7 +16,7 @@ from diffusers import (
 from transformers import CLIPVisionModelWithProjection
 from dotenv import load_dotenv
 
-# ✅ Import rembg สำหรับลบพื้นหลัง
+# ✅ Import rembg
 try:
     from rembg import remove as remove_bg
     HAS_REMBG = True
@@ -24,7 +24,6 @@ except ImportError:
     print("⚠️ 'rembg' not installed. Background removal will be skipped.")
     HAS_REMBG = False
 
-# พยายาม import psutil
 try:
     import psutil
 except ImportError:
@@ -33,17 +32,18 @@ except ImportError:
 load_dotenv()
 
 # ================= CONFIG =================
-IMG_WIDTH = 768
-IMG_HEIGHT = 512
-NUM_STEPS = 25 # ✅ แก้เป็น 25 (Background)
-CHAR_STEPS = 25 # ✅ แก้เป็น 25 (Character)
+IMG_WIDTH = 1024
+IMG_HEIGHT = 768
+NUM_STEPS = 25 
+CHAR_STEPS = 30 
 
-# Model Paths
 ollamaURL = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api/generate")
 ollamaModel = os.getenv("OLLAMA_MODEL", "gemma3:12b")
 stabilityModel = "C:\\stability matrix\\Data\\Models\\StableDiffusion\\juggernautXL_ragnarokBy.safetensors"
+
 IP_ADAPTER_REPO = "h94/IP-Adapter" 
 IP_ADAPTER_SUBFOLDER = "sdxl_models"
+# ✅ ใช้ Plus Face เพื่อเน้นหน้าเหมือนที่สุด
 IP_ADAPTER_FILENAME = "ip-adapter-plus-face_sdxl_vit-h.bin"
 
 # ================= UTILS =================
@@ -114,7 +114,6 @@ class SDEngine:
     def load_pipeline(self):
         print(f"   🚀 Loading SDXL ({self.device})...")
         
-        # 1. Image Encoder
         try:
             image_encoder = CLIPVisionModelWithProjection.from_pretrained(
                 "h94/IP-Adapter", subfolder="models/image_encoder", torch_dtype=self.dtype, local_files_only=True
@@ -124,7 +123,6 @@ class SDEngine:
                 "h94/IP-Adapter", subfolder="models/image_encoder", torch_dtype=self.dtype
             )
 
-        # 2. Pipeline
         PipelineClass = StableDiffusionXLInpaintPipeline if "xl" in stabilityModel.lower() else StableDiffusionInpaintPipeline
         
         try:
@@ -133,18 +131,15 @@ class SDEngine:
             else:
                 pipe = PipelineClass.from_pretrained(stabilityModel, torch_dtype=self.dtype, image_encoder=image_encoder)
         except:
-            # Fallback
             pipe = PipelineClass.from_pretrained(stabilityModel, torch_dtype=self.dtype, image_encoder=image_encoder, use_safetensors=False)
 
         if hasattr(pipe, "safety_checker"): pipe.safety_checker = None
         
-        # Optimization
         try: pipe.enable_vae_slicing()
         except: pass
         if self.device == "cuda": pipe.enable_model_cpu_offload()
         else: pipe.to(self.device)
         
-        # IP-Adapter
         pipe.load_ip_adapter(IP_ADAPTER_REPO, subfolder=IP_ADAPTER_SUBFOLDER, weight_name=IP_ADAPTER_FILENAME)
         
         return pipe
@@ -152,40 +147,26 @@ class SDEngine:
     def get_smart_coords(self, pos, depth, w, h):
         p, d = pos.upper(), depth.upper()
         
-        # ปรับสเกลตามระยะ
-        if "FORE" in d: scale, y_rat = 0.85, 0.10
-        elif "MID" in d: scale, y_rat = 0.60, 0.30
-        else: scale, y_rat = 0.40, 0.40
+        if "FORE" in d: scale, y_rat = 0.90, 0.08 
+        elif "MID" in d: scale, y_rat = 0.70, 0.25
+        else: scale, y_rat = 0.50, 0.40
         
         char_h = int(h * scale)
-        # คำนวณความกว้างตามสัดส่วน 1:2.5 (คนปกติ) เพื่อไม่ให้อ้วน/ผอมเกิน
-        char_w = int(char_h / 2.5) 
+        # ปรับสัดส่วนให้กว้างขึ้น เพื่อรองรับท่าทางต่างๆ
+        char_w = int(char_h / 1.6) 
         
         top_y = int(h * y_rat)
         
-        if "LEFT" in p: start_x = int(w * 0.1)
-        elif "RIGHT" in p: start_x = int(w * 0.9) - char_w
+        if "LEFT" in p: start_x = int(w * 0.05)
+        elif "RIGHT" in p: start_x = int(w * 0.95) - char_w
         else: start_x = (w // 2) - (char_w // 2)
         
         return (start_x, top_y, start_x + char_w, top_y + char_h)
 
     def process_character_image(self, img_path):
-        """
-        โหลดรูป -> ลบพื้นหลัง -> คืนค่าเป็น RGBA
-        """
         if not os.path.exists(img_path): return None
-        
-        img = Image.open(img_path).convert("RGBA")
-        
-        # ✅ ลบพื้นหลัง (ถ้ามี library)
-        if HAS_REMBG:
-            # print(f"      ✂️ Removing background for {os.path.basename(img_path)}...")
-            try:
-                img = remove_bg(img)
-            except Exception as e:
-                print(f"      ⚠️ Rembg failed: {e}")
-        
-        return img
+        # แค่โหลดรูป ไม่ต้องลบพื้นหลังแล้ว เพราะเราจะใช้แค่เป็น Reference ให้ IP-Adapter
+        return Image.open(img_path).convert("RGB")
 
     def run(self, scene_plan, output_path, character_refs):
         log_memory_usage("Start SD")
@@ -195,12 +176,12 @@ class SDEngine:
             
             env_desc = clean_prompt(scene_plan.get('environment', 'scene'))
             STYLE = "masterpiece, best quality, photorealistic, 8k, raw photo, ancient chinese wuxia style"
-            # ✅ เพิ่มคำสั่งห้ามคน (people, humans, etc.) ลงใน Negative Prompt
-            NEG = "people, humans, person, man, woman, girl, boy, crowd, character, modern, western, low quality, ugly, blurry, watermark, text, bad anatomy, deformed face, faceless"
+            # ✅ เพิ่มน้ำหนัก Negative Prompt เพื่อกันคนออกจากฉากหลังให้เด็ดขาด
+            NEG = "(people:1.3), (humans:1.3), (person:1.3), man, woman, girl, boy, crowd, character, modern, western, low quality, ugly, blurry, watermark, text, bad anatomy, deformed face, faceless, extra limbs"
             
-            base_prompt = f"{STYLE}, {env_desc}, no humans, empty scenery, masterpiece"
+            # ✅ เพิ่มน้ำหนัก Base Prompt เน้นฉากว่าง
+            base_prompt = f"{STYLE}, {env_desc}, (no humans:1.3), (empty scenery:1.3), masterpiece"
             
-            # ✅ FIX: สร้าง Dummy Reference (รูปดำ) เพื่อส่งให้ IP-Adapter
             dummy_ref = Image.new("RGB", (224, 224), "black")
 
             # 1. Gen Background
@@ -214,15 +195,11 @@ class SDEngine:
                 height=IMG_HEIGHT, width=IMG_WIDTH, num_inference_steps=NUM_STEPS, strength=1.0
             ).images[0]
 
-            # 📸 SAVE: Background Step
             try:
-                step0_path = output_path.replace(".png", "_00_background.png")
-                base_image.save(step0_path)
-                print(f"      💾 Debug: {os.path.basename(step0_path)}")
+                base_image.save(output_path.replace(".png", "_00_background.png"))
             except: pass
 
-            # 2. Paste Characters & Blend
-            # Sort Depth: Back -> Fore
+            # 2. Add Characters (Generation Mode - Not Paste)
             character_refs.sort(key=lambda x: 0 if "BACK" in x['depth'] else (1 if "MID" in x['depth'] else 2))
 
             for i, char in enumerate(character_refs):
@@ -231,57 +208,45 @@ class SDEngine:
                 
                 print(f"   👤 Processing: {name} ({char['depth']}) | Ref: {os.path.basename(ref_path)}")
                 
-                # โหลดและตัดพื้นหลัง
-                char_img_rgba = self.process_character_image(ref_path)
-                if not char_img_rgba: continue
+                ref_image = self.process_character_image(ref_path)
+                if not ref_image: continue
 
-                # คำนวณขนาด
+                # คำนวณพื้นที่ที่จะวาด
                 x1, y1, x2, y2 = self.get_smart_coords(char['position'], char['depth'], IMG_WIDTH, IMG_HEIGHT)
-                target_w, target_h = x2 - x1, y2 - y1
                 
-                # Resize
-                char_img_rgba.thumbnail((target_w, target_h), Image.Resampling.LANCZOS)
+                # สร้าง Mask ขาวเฉพาะตรงที่จะวาดตัวละคร
+                mask = Image.new("L", (IMG_WIDTH, IMG_HEIGHT), 0)
+                draw = ImageDraw.Draw(mask)
+                draw.rectangle((x1, y1, x2, y2), fill=255)
+                mask = mask.filter(ImageFilter.GaussianBlur(radius=10)) 
                 
-                # คำนวณจุดวาง (Center Bottom aligned)
-                paste_x = x1 + (target_w - char_img_rgba.width) // 2
-                paste_y = y2 - char_img_rgba.height # วางให้เท้าชิดขอบล่างของกรอบ
+                # Inpaint (Generation Mode)
+                # ✅ Scale สูงๆ เพื่อบังคับหน้าเหมือน
+                pipe.set_ip_adapter_scale(0.85) 
                 
-                # แปะรูปลงไป (Composite)
-                base_image.paste(char_img_rgba, (paste_x, paste_y), char_img_rgba)
-                
-                # สร้าง Mask จาก Alpha Channel ของตัวละคร
-                char_mask = char_img_rgba.split()[-1] # เอา Alpha Channel
-                full_mask = Image.new("L", (IMG_WIDTH, IMG_HEIGHT), 0)
-                full_mask.paste(char_mask, (paste_x, paste_y))
-                
-                # ขยาย Mask ออกเล็กน้อยเพื่อให้ AI เกลี่ยขอบ (Dilate)
-                full_mask = full_mask.filter(ImageFilter.GaussianBlur(radius=5)) # เบลอนิดเดียวพอ
-                
-                # Inpaint (Blending)
-                pipe.set_ip_adapter_scale(0.9)  # เพิ่มแรงดึงจากรูปต้นฉบับ
-                prompt = f"{STYLE}, {name}, {char['visual_action']}, highly detailed face, sharp eyes, detailed features, masterpiece"
-                
+                # ✅ เพิ่มคำสั่ง "full body shot" และ "standing" เพื่อบังคับให้วาดทั้งตัว
+                action = char['visual_action']
+                prompt = f"{STYLE}, full body shot of {name}, standing, {action}, highly detailed face, sharp eyes, masterpiece"
+                print(f"      Prompt: {prompt}")
+
                 base_image = pipe(
                     prompt=prompt, negative_prompt=NEG,
                     image=base_image,
-                    mask_image=full_mask,
-                    ip_adapter_image=char_img_rgba.convert("RGB"), # ส่งรูปไปให้ดูแสง
+                    mask_image=mask,
+                    ip_adapter_image=ref_image, # ส่งรูป Ref ให้ AI ดูหน้า
                     height=IMG_HEIGHT, width=IMG_WIDTH,
-                    num_inference_steps=CHAR_STEPS, # ✅ ใช้ 25 Steps เท่ากัน
-                    strength=0.35, 
-                    guidance_scale=6.0
+                    num_inference_steps=CHAR_STEPS, 
+                    strength=1.0, # ✅ Strength 1.0 = วาดใหม่ 100% ตาม Prompt และ IP-Adapter (ไม่สนภาพเดิม)
+                    guidance_scale=7.5
                 ).images[0]
 
-                # 📸 SAVE: Character Step
                 try:
                     safe_name = re.sub(r'[^a-zA-Z0-9]', '_', name)
-                    step_path = output_path.replace(".png", f"_{i+1:02d}_{safe_name}.png")
-                    base_image.save(step_path)
-                    print(f"      💾 Debug: {os.path.basename(step_path)}")
+                    base_image.save(output_path.replace(".png", f"_{i+1:02d}_{safe_name}.png"))
                 except: pass
 
             base_image.save(output_path)
-            print(f"✅ Final Saved: {output_path}")
+            print(f"✅ Saved: {output_path}")
             return True
             
         except Exception as e:

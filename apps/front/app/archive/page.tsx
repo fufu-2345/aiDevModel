@@ -192,13 +192,21 @@ export default function MovieDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
+      <div
+        className="fixed inset-0 z-0 bg-cover bg-center bg-no-repeat"
+        style={{
+          backgroundImage: "url('/pic/bg.png')",
+        }}
+      />
       <Toaster position="top-center" />
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-6xl mx-auto relative z-10">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-800">📚 Movie Archive</h1>
+          <h1 className="text-6xl font-bold tracking-wide drop-shadow-[0_0_15px_rgba(244,114,182,0.6)] text-transparent bg-clip-text bg-gradient-to-br from-gray-200 via-gray-300 to-gray-400 py-2 leading-tight">
+            Archive
+          </h1>
           <button
             onClick={() => setIsEditMode(!isEditMode)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition ${isEditMode ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-gray-200 text-gray-700 hover:bg-gray-300"}`}
+            className="w-[10%] py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 text-white font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
           >
             {isEditMode ? (
               <>
@@ -211,64 +219,88 @@ export default function MovieDashboard() {
             )}
           </button>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-          {movies.map((movie) => (
-            <div
-              key={movie.id}
-              onClick={() => handleCardClick(movie.id)}
-              className={`bg-white rounded-xl shadow-sm hover:shadow-md transition overflow-hidden border border-gray-100 flex flex-col group cursor-pointer relative ${isEditMode ? "ring-2 ring-red-100" : ""}`}
-            >
-              {isEditMode && (
-                <button
-                  onClick={(e) => handleDelete(e, movie.id)}
-                  className="absolute top-2 right-2 z-10 bg-red-500 hover:bg-red-600 text-white p-2 rounded-full shadow-md transition transform hover:scale-110"
-                  title="Delete Movie"
-                >
-                  <TrashIcon className="w-4 h-4" />
-                </button>
-              )}
-              <div className="h-48 bg-gray-200 flex items-center justify-center relative overflow-hidden">
-                {movie.picPath ? (
-                  <img
-                    src={movie.picPath}
-                    alt={movie.movieTitle}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <BookOpenIcon className="w-12 h-12 text-gray-400" />
-                )}
-                {!isEditMode && (
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition" />
-                )}
-              </div>
-              <div className="p-4 flex-1">
-                <h3
-                  className="font-semibold text-lg text-gray-800 line-clamp-1"
-                  title={movie.movieTitle}
-                >
-                  {movie.movieTitle}
-                </h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  Chapters:{" "}
-                  <span className="font-medium text-blue-600">
-                    {movie.episodeAmount}
-                  </span>
-                </p>
-              </div>
+        <div className="bg-white/10 backdrop-blur-md p-8 rounded-2xl shadow-sm border border-gray-100 w-[110%] relative left-1/2 -translate-x-1/2">
+          <div className="relative w-full max-w-xl mb-6">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <svg
+                className="h-5 w-5 text-gray-400"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                />
+              </svg>
             </div>
-          ))}
-          <button
-            onClick={() => setIsModalOpen(true)}
-            disabled={isEditMode}
-            className={`h-[280px] rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 transition gap-2 group ${isEditMode ? "opacity-50 cursor-not-allowed" : "hover:text-blue-500 hover:border-blue-400 hover:bg-blue-50"}`}
-          >
-            <div
-              className={`w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center transition ${!isEditMode && "group-hover:bg-blue-100"}`}
+            <input
+              type="text"
+              className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-black sm:text-sm transition duration-150 ease-in-out cursor-pointer"
+              placeholder="name of novel"
+            />
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            {movies.map((movie) => (
+              <div
+                key={movie.id}
+                onClick={() => handleCardClick(movie.id)}
+                className={`bg-white rounded-xl shadow-sm hover:shadow-md transition overflow-hidden border border-gray-100 flex flex-col group cursor-pointer relative ${isEditMode ? "ring-2 ring-red-100" : ""}`}
+              >
+                {isEditMode && (
+                  <button
+                    onClick={(e) => handleDelete(e, movie.id)}
+                    className="absolute top-2 right-2 z-10 bg-red-500 hover:bg-red-600 text-white p-2 rounded-full shadow-md transition transform hover:scale-110"
+                    title="Delete Movie"
+                  >
+                    <TrashIcon className="w-4 h-4" />
+                  </button>
+                )}
+                <div className="h-48 bg-gray-200 flex items-center justify-center relative overflow-hidden">
+                  {movie.picPath ? (
+                    <img
+                      src={movie.picPath}
+                      alt={movie.movieTitle}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <BookOpenIcon className="w-12 h-12 text-gray-400" />
+                  )}
+                  {!isEditMode && (
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition" />
+                  )}
+                </div>
+                <div className="p-4 flex-1">
+                  <h3
+                    className="font-semibold text-lg text-gray-800 line-clamp-1"
+                    title={movie.movieTitle}
+                  >
+                    {movie.movieTitle}
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Chapters:{" "}
+                    <span className="font-medium text-blue-600">
+                      {movie.episodeAmount}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            ))}
+            <button
+              onClick={() => setIsModalOpen(true)}
+              disabled={isEditMode}
+              className={`h-[280px] rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 transition gap-2 group ${isEditMode ? "opacity-50 cursor-not-allowed" : "hover:text-blue-500 hover:border-blue-400 hover:bg-blue-50"}`}
             >
-              <PlusIcon className="w-6 h-6" />
-            </div>
-            <span className="font-medium">Add New Movie</span>
-          </button>
+              <div
+                className={`w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center transition ${!isEditMode && "group-hover:bg-blue-100"}`}
+              >
+                <PlusIcon className="w-6 h-6" />
+              </div>
+              <span className="font-medium text-white">Add New Movie</span>
+            </button>
+          </div>
         </div>
       </div>
       {isModalOpen && (

@@ -97,58 +97,6 @@ export default function ChapterReaderPage({
     fetchChapter();
   }, [chapterId]);
 
-  const extract = async () => {
-    try {
-      const response = await fetch(
-        `http://127.0.0.1:8000/extract/${chapterId}`,
-        {
-          method: "GET",
-        },
-      );
-      if (response.ok) {
-        return;
-      }
-    } catch (error) {
-      console.error("Error:", error);
-      toast.error("An error occurred while starting image generation.");
-    }
-  };
-
-  const extractGen = async () => {
-    try {
-      const response = await fetch(
-        `http://127.0.0.1:8000/extract/${chapterId}`,
-        {
-          method: "GET",
-        },
-      );
-      if (response.ok) {
-        try {
-          const response = await fetch(
-            `http://127.0.0.1:8000/genPic/${chapterId}`,
-            {
-              method: "GET",
-            },
-          );
-          console.log(response, "aaaaa");
-          if (response.ok) {
-            toast.success("Image generation started!");
-          } else {
-            toast.error("Failed to start image generation.");
-          }
-        } catch (error) {
-          console.error("Error:", error);
-          toast.error("An error occurred while starting image generation.");
-        }
-      } else {
-        toast.error("Failed to start image generation.");
-      }
-    } catch (error) {
-      console.error("Error:", error);
-      toast.error("An error occurred while starting image generation.");
-    }
-  };
-
   const genPic = async () => {
     try {
       const response = await fetch(
@@ -205,9 +153,16 @@ export default function ChapterReaderPage({
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
+      <div
+        className="fixed inset-0 z-0 bg-cover bg-center bg-no-repeat"
+        style={{
+          backgroundImage: "url('/pic/bg.png')",
+        }}
+      />
+
       <Toaster position="top-center" />
-      <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden min-h-[90vh] flex flex-col">
-        <div className="px-8 py-6 border-b border-gray-100 flex justify-between items-center bg-white sticky top-0 z-10">
+      <div className="max-w-4xl mx-auto bg-white/10 backdrop-blur-3xl rounded-2xl shadow-sm border border-gray-100 overflow-hidden min-h-[90vh] flex flex-col relative z-10">
+        <div className="px-8 py-6 border-b border-gray-100 flex justify-between items-center sticky top-0 z-10">
           <div className="flex items-center gap-4 flex-1">
             <button
               onClick={() => router.push(`/chapters/${chapter.movieId}`)}
@@ -225,8 +180,8 @@ export default function ChapterReaderPage({
                   className="text-2xl font-bold w-full border p-1 rounded"
                 />
               ) : (
-                <h1 className="text-2xl font-bold truncate">
-                  <span className="text-blue-600 mr-2">
+                <h1 className="text-2xl text-white font-bold truncate">
+                  <span className="text-white mr-2">
                     EP {chapter.episodeNumber}
                   </span>
                   {chapter.chapterTitle}
@@ -245,7 +200,7 @@ export default function ChapterReaderPage({
                 </button>
                 <button
                   onClick={handleSave}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg flex gap-2"
+                  className="w-[25%] py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 text-white font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
                 >
                   <SaveIcon className="w-4 h-4" /> Save
                 </button>
@@ -253,34 +208,11 @@ export default function ChapterReaderPage({
             ) : (
               <button
                 onClick={() => setIsEditing(true)}
-                className="px-4 py-2 border rounded-lg flex gap-2"
+                className="w-[25%] py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 text-white font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
               >
                 <EditIcon className="w-4 h-4" /> Edit
               </button>
             )}
-          </div>
-        </div>
-        <div>
-          <div
-            onClick={() => {
-              console.log("extract+gen");
-              extract();
-            }}
-            className="cursor-pointer"
-          >
-            extract+gen
-          </div>
-        </div>
-        <br />
-        <div>
-          <div
-            onClick={() => {
-              console.log("extract+gen");
-              extractGen();
-            }}
-            className="cursor-pointer"
-          >
-            extract+gen
           </div>
         </div>
         <br />
@@ -303,7 +235,7 @@ export default function ChapterReaderPage({
               className="w-full h-[60vh] p-4 border rounded-lg font-mono text-lg"
             />
           ) : (
-            <article className="prose prose-lg max-w-none whitespace-pre-wrap">
+            <article className="prose prose-lg max-w-none whitespace-pre-wrap text-white">
               {chapter.chapterDetail}
             </article>
           )}

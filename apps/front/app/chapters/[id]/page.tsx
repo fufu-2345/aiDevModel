@@ -129,20 +129,24 @@ export default function ChapterListPage({
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
+      <div
+        className="fixed inset-0 z-0 bg-cover bg-center bg-no-repeat"
+        style={{
+          backgroundImage: "url('/pic/bg.png')",
+        }}
+      />
       <Toaster position="top-center" />
 
-      <div className="max-w-6xl mx-auto">
-        {/* Header / Back Button */}
+      <div className="max-w-6xl mx-auto relative z-10">
         <div className="mb-8">
           <button
             onClick={() => router.push("/archive")}
-            className="flex items-center gap-2 text-gray-600 hover:text-blue-600 transition font-medium mb-4"
+            className="flex items-center gap-2 text-white transition font-medium mb-4"
           >
             <ArrowLeftIcon className="w-5 h-5" /> Back to Archive
           </button>
 
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-8 items-start">
-            {/* Movie Cover */}
+          <div className="bg-white/10 backdrop-blur-md p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-8 items-start">
             <div className="w-40 h-60 bg-gray-200 rounded-xl overflow-hidden shadow-md flex-shrink-0">
               {movie.picPath ? (
                 <img
@@ -157,99 +161,95 @@ export default function ChapterListPage({
               )}
             </div>
 
-            {/* Movie Info */}
             <div className="flex-1 py-2">
-              <h1 className="text-3xl md:text-4xl font-bold text-gray-800 mb-3">
+              <p className="text-3xl md:text-4xl font-bold text-white mb-3">
                 {movie.movieTitle}
-              </h1>
-              <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600 mb-6">
-                <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-medium">
-                  {chapters.length} Chapters
-                </span>
-                <span className="px-3 py-1 bg-gray-100 rounded-full">
-                  ID: {movie.id}
-                </span>
-              </div>
-              <p className="text-gray-500 leading-relaxed max-w-2xl">
-                Select a chapter below to start reading or editing the content.
               </p>
-              <div
-                onClick={() => {
-                  console.log("11111");
-                }}
-                className="mt-6 inline-block px-5 py-2 bg-blue-600 text-white rounded-full shadow-md hover:bg-blue-700 cursor-pointer transition"
-              >
-                test
-              </div>
             </div>
           </div>
         </div>
 
-        {/* Chapters Grid */}
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-gray-800">Episodes</h2>
-          <span className="text-sm text-gray-500">{chapters.length} items</span>
-        </div>
-
-        {chapters.length > 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-            {chapters.map((chapter) => (
-              <div
-                key={chapter.id}
-                onClick={() => router.push(`/chapterDetail/${chapter.id}`)}
-                className="bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 border border-gray-100 overflow-hidden cursor-pointer group flex flex-col h-full"
-              >
-                {/* Thumbnail */}
-                <div className="aspect-video bg-gray-100 relative overflow-hidden">
-                  {chapter.picPath ? (
-                    <img
-                      src={`http://127.0.0.1:8000/static/${chapter.picPath}`}
-                      alt={chapter.chapterTitle}
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-gray-300 bg-gray-50">
-                      <ImageIcon className="w-10 h-10" />
-                    </div>
-                  )}
-
-                  {/* Overlay on Hover */}
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors duration-200 flex items-center justify-center">
-                    <div className="bg-white/90 p-2 rounded-full opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all duration-200 shadow-sm">
-                      <PlayIcon className="w-6 h-6 text-blue-600" />
-                    </div>
-                  </div>
-
-                  {/* Episode Badge */}
-                  <div className="absolute top-2 left-2 bg-black/70 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded-md shadow-sm">
-                    EP {chapter.episodeNumber}
-                  </div>
-                </div>
-
-                {/* Content */}
-                <div className="p-4 flex-1 flex flex-col">
-                  <h3
-                    className="font-semibold text-gray-800 text-sm line-clamp-2 leading-snug group-hover:text-blue-600 transition-colors"
-                    title={chapter.chapterTitle}
+        <div className="bg-white/10 backdrop-blur-md p-6 rounded-2xl shadow-sm border border-gray-100">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex-1 mr-4">
+              <div className="relative w-full max-w-xl">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <svg
+                    className="h-5 w-5 text-gray-400"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
                   >
-                    {chapter.chapterTitle}
-                  </h3>
-                  <div className="mt-auto pt-3 flex items-center justify-between text-xs text-gray-400">
-                    <span>Click to read</span>
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                    />
+                  </svg>
+                </div>
+                <input
+                  type="text"
+                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-black sm:text-sm transition duration-150 ease-in-out cursor-pointer"
+                  placeholder="name or number of episode"
+                />
+              </div>
+            </div>
+            <span className="text-sm text-gray-300">
+              {chapters.length} Episodes
+            </span>
+          </div>
+
+          {chapters.length > 0 ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+              {chapters.map((chapter) => (
+                <div
+                  key={chapter.id}
+                  onClick={() => router.push(`/chapterDetail/${chapter.id}`)}
+                  className="bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 border border-gray-100 overflow-hidden cursor-pointer group flex flex-col h-full"
+                >
+                  <div className="aspect-video bg-gray-100 relative overflow-hidden">
+                    {chapter.picPath ? (
+                      <img
+                        src={`http://127.0.0.1:8000/static/${chapter.picPath}`}
+                        alt={chapter.chapterTitle}
+                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-gray-300 bg-gray-50">
+                        <ImageIcon className="w-10 h-10" />
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors duration-200 flex items-center justify-center">
+                      <div className="bg-white/90 p-2 rounded-full opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all duration-200 shadow-sm">
+                        <PlayIcon className="w-6 h-6 text-blue-600" />
+                      </div>
+                    </div>
+                    <div className="absolute top-2 left-2 bg-black/70 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded-md shadow-sm">
+                      EP {chapter.episodeNumber}
+                    </div>
+                  </div>
+                  <div className="p-4 flex-1 flex flex-col">
+                    <h3
+                      className="font-semibold text-gray-800 text-sm line-clamp-2 leading-snug group-hover:text-blue-600 transition-colors"
+                      title={chapter.chapterTitle}
+                    >
+                      {chapter.chapterTitle}
+                    </h3>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-16 bg-white rounded-2xl border-2 border-dashed border-gray-200 text-gray-400">
-            <ImageIcon className="w-16 h-16 mb-4 opacity-50" />
-            <p className="text-lg font-medium">No chapters found</p>
-            <p className="text-sm">
-              Upload a PDF to generate chapters for this movie.
-            </p>
-          </div>
-        )}
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-16 bg-white rounded-2xl border-2 border-dashed border-gray-200 text-gray-400">
+              <ImageIcon className="w-16 h-16 mb-4 opacity-50" />
+              <p className="text-lg font-medium">No chapters found</p>
+              <p className="text-sm">
+                Upload a PDF to generate chapters for this movie.
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
