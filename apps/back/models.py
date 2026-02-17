@@ -74,3 +74,9 @@ class altCharacter(SQLModel, table=True):
     entityId: Optional[int] = Field(default=None, foreign_key="character.id")
     
     character: Optional["character"] = Relationship(back_populates="altNames")
+    
+class user(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    role: str = Field(default="user")
+    emailL: str
+    password: str 

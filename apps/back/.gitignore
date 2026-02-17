@@ -6,3 +6,4 @@ public/storage/entities/*
 public/storage/thumbnail/*
 public/storage/pic/*
 ipAdapter/*
+output_audio/*
