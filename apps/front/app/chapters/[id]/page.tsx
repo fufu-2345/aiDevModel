@@ -73,35 +73,57 @@ export default function ChapterListPage({
   const [movie, setMovie] = useState<Movie | null>(null);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchBar, setSearchBar] = useState("");
   const resolvedParams = use(params);
   const movieId = resolvedParams.id;
   const router = useRouter();
 
-  useEffect(() => {
-    if (!movieId) return;
-    const fetchData = async () => {
+  const fetchData = async () => {
+    try {
+      // Fetch Movie Data
+      const movieRes = await fetch(`http://127.0.0.1:8000/movies/${movieId}`);
+      if (movieRes.ok) {
+        setMovie(await movieRes.json());
+      }
+      // Fetch Chapters Data
+      const chapterRes = await fetch(
+        `http://127.0.0.1:8000/movies/${movieId}/chapters`,
+      );
+      if (chapterRes.ok) {
+        const data = await chapterRes.json();
+        setChapters(data);
+      }
+    } catch (error) {
+      console.error("Error:", error);
+      toast.error("Failed to load data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const search = async () => {
+    if (searchBar.trim() === "") {
+      fetchData();
+      return;
+    } else {
       try {
-        // Fetch Movie Data
-        const movieRes = await fetch(`http://127.0.0.1:8000/movies/${movieId}`);
-        if (movieRes.ok) {
-          setMovie(await movieRes.json());
-        }
-        // Fetch Chapters Data
-        const chapterRes = await fetch(
-          `http://127.0.0.1:8000/movies/${movieId}/chapters`,
+        const res = await fetch(
+          `http://127.0.0.1:8000/movies/chapters/searchChapters/${searchBar}/${movieId}/`,
         );
-        if (chapterRes.ok) {
-          const data = await chapterRes.json();
+        if (res.ok) {
+          const data = await res.json();
           setChapters(data);
+        } else {
+          toast.error("Failed to load chapters");
         }
       } catch (error) {
-        console.error("Error:", error);
-        toast.error("Failed to load data");
-      } finally {
-        setLoading(false);
+        toast.error("Connection error");
       }
-    };
+    }
+  };
 
+  useEffect(() => {
+    if (!movieId) return;
     fetchData();
   }, [movieId]);
 
@@ -147,7 +169,7 @@ export default function ChapterListPage({
           </button>
 
           <div className="bg-white/10 backdrop-blur-md p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-8 items-start">
-            <div className="w-40 h-60 bg-gray-200 rounded-xl overflow-hidden shadow-md flex-shrink-0">
+            <div className="w-80 h-60 bg-gray-200 rounded-xl overflow-hidden shadow-md flex-shrink-0">
               {movie.picPath ? (
                 <img
                   src={movie.picPath}
@@ -171,29 +193,34 @@ export default function ChapterListPage({
 
         <div className="bg-white/10 backdrop-blur-md p-6 rounded-2xl shadow-sm border border-gray-100">
           <div className="flex items-center justify-between mb-6">
-            <div className="flex-1 mr-4">
-              <div className="relative w-full max-w-xl">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <svg
-                    className="h-5 w-5 text-gray-400"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                    />
-                  </svg>
-                </div>
-                <input
-                  type="text"
-                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-black sm:text-sm transition duration-150 ease-in-out cursor-pointer"
-                  placeholder="name or number of episode"
-                />
+            <div className="relative w-full max-w-xl mb-6">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <svg
+                  className="h-5 w-5 text-gray-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
+                </svg>
               </div>
+              <input
+                type="text"
+                className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-black sm:text-sm transition duration-150 ease-in-out cursor-pointer"
+                placeholder="name of novel"
+                value={searchBar}
+                onChange={(e) => setSearchBar(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    search();
+                  }
+                }}
+              />
             </div>
             <span className="text-sm text-gray-300">
               {chapters.length} Episodes

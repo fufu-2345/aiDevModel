@@ -161,84 +161,79 @@ export default function ChapterReaderPage({
       />
 
       <Toaster position="top-center" />
-      <div className="max-w-4xl mx-auto bg-white/10 backdrop-blur-3xl rounded-2xl shadow-sm border border-gray-100 overflow-hidden min-h-[90vh] flex flex-col relative z-10">
-        <div className="px-8 py-6 border-b border-gray-100 flex justify-between items-center sticky top-0 z-10">
-          <div className="flex items-center gap-4 flex-1">
-            <button
-              onClick={() => router.push(`/chapters/${chapter.movieId}`)}
-              className="p-2 text-gray-500 hover:text-blue-600 bg-gray-50 hover:bg-gray-100 rounded-lg"
-            >
-              <ArrowLeftIcon className="w-6 h-6" />
-            </button>
-
-            <div className="flex-1 overflow-hidden">
+      <div className="max-w-6xl mx-auto relative z-10">
+        <button
+          onClick={() => router.push(`/chapters/${chapter.movieId}`)}
+          className="flex items-center gap-2 text-white transition font-medium mb-4 relative z-10"
+        >
+          <ArrowLeftIcon className="w-5 h-5" /> Back to all chapters
+        </button>
+        <div className="max-w-6xl mx-auto bg-white/10 backdrop-blur-3xl rounded-2xl shadow-sm border border-gray-100 overflow-hidden min-h-[90vh] flex flex-col relative z-10">
+          <div className="px-8 py-6 border-b border-gray-100 flex justify-between items-center sticky top-0 z-10">
+            <div className="flex items-center gap-4 flex-1">
+              <div className="flex-1 overflow-hidden">
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    className="text-2xl font-bold w-full border p-1 rounded"
+                  />
+                ) : (
+                  <h1 className="text-2xl text-white font-bold truncate">
+                    <span className="text-white mr-2">
+                      EP {chapter.episodeNumber}
+                    </span>
+                    {chapter.chapterTitle}
+                  </h1>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-2 ml-4">
+              <button
+                onClick={() => genPic()}
+                className=" py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
+              >
+                Gen Pic
+              </button>
               {isEditing ? (
-                <input
-                  type="text"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  className="text-2xl font-bold w-full border p-1 rounded"
-                />
+                <>
+                  <button
+                    onClick={() => setIsEditing(false)}
+                    className="px-4 py-2 bg-gray-100 rounded-lg"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSave}
+                    className="py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
+                  >
+                    <SaveIcon className="w-4 h-4" /> Save
+                  </button>
+                </>
               ) : (
-                <h1 className="text-2xl text-white font-bold truncate">
-                  <span className="text-white mr-2">
-                    EP {chapter.episodeNumber}
-                  </span>
-                  {chapter.chapterTitle}
-                </h1>
+                <button
+                  onClick={() => setIsEditing(true)}
+                  className="py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
+                >
+                  <EditIcon className="w-4 h-4" /> Edit
+                </button>
               )}
             </div>
           </div>
-          <div className="flex gap-2 ml-4">
+          <div className="flex-1 p-8">
             {isEditing ? (
-              <>
-                <button
-                  onClick={() => setIsEditing(false)}
-                  className="px-4 py-2 bg-gray-100 rounded-lg"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSave}
-                  className="w-[25%] py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 text-white font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
-                >
-                  <SaveIcon className="w-4 h-4" /> Save
-                </button>
-              </>
+              <textarea
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                className="w-full h-[60vh] p-4 border rounded-lg font-mono text-lg"
+              />
             ) : (
-              <button
-                onClick={() => setIsEditing(true)}
-                className="w-[25%] py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 text-white font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
-              >
-                <EditIcon className="w-4 h-4" /> Edit
-              </button>
+              <article className="prose prose-lg max-w-none whitespace-pre-wrap text-white">
+                {chapter.chapterDetail}
+              </article>
             )}
           </div>
-        </div>
-        <br />
-        <div>
-          <div
-            onClick={() => {
-              console.log("gen pic");
-              genPic();
-            }}
-            className="cursor-pointer"
-          >
-            gen pic
-          </div>
-        </div>
-        <div className="flex-1 p-8">
-          {isEditing ? (
-            <textarea
-              value={editContent}
-              onChange={(e) => setEditContent(e.target.value)}
-              className="w-full h-[60vh] p-4 border rounded-lg font-mono text-lg"
-            />
-          ) : (
-            <article className="prose prose-lg max-w-none whitespace-pre-wrap text-white">
-              {chapter.chapterDetail}
-            </article>
-          )}
         </div>
       </div>
     </div>

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select
+from sqlmodel import Session, select, col, or_, cast, String, and_
 from typing import List
 from database import get_session 
 from models import movieTitle, chapterContent, chunkContent
@@ -26,6 +26,28 @@ def get_movie(movie_id: int, session: Session = Depends(get_session)):
     if not movie:
         raise HTTPException(status_code=404, detail="Movie not found")
     return movie
+
+# search ของ chapters
+@router.get("/chapters/searchChapters/{search}/{movieId}", response_model=List[chapterContent])
+def searchChapters(search: str, movieId: int, session: Session = Depends(get_session)):
+    statement = select(chapterContent).where(
+        and_(
+            col(chapterContent.movieId) == movieId,
+            or_(
+                col(chapterContent.chapterTitle).contains(search),
+                cast(chapterContent.episodeNumber, String).contains(search)
+            )
+        )
+    ).order_by(chapterContent.episodeNumber)
+    return session.exec(statement).all()
+
+# search ของ archive
+@router.get("/chapters/searchArchive/{search}", response_model=List[movieTitle])
+def searchArchive(search: str, session: Session = Depends(get_session)):
+    statement = select(movieTitle).where(
+        col(movieTitle.movieTitle).contains(search),
+    )
+    return session.exec(statement).all()
 
 # หน้า chapter
 @router.get("/{movie_id}/chapters", response_model=List[chapterContent])

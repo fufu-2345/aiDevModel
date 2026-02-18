@@ -111,6 +111,7 @@ export default function MovieDashboard() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [titleInput, setTitleInput] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [searchBar, setSearchBar] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
@@ -125,6 +126,28 @@ export default function MovieDashboard() {
       }
     } catch (error) {
       toast.error("Connection error");
+    }
+  };
+
+  const search = async () => {
+    if (searchBar.trim() === "") {
+      fetchMovies();
+      return;
+    } else {
+      try {
+        const res = await fetch(
+          `http://127.0.0.1:8000/movies/chapters/searchArchive/${searchBar}/`,
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setMovies(data);
+          console.log(data);
+        } else {
+          toast.error("Failed to load movies");
+        }
+      } catch (error) {
+        toast.error("Connection error");
+      }
     }
   };
 
@@ -240,6 +263,13 @@ export default function MovieDashboard() {
               type="text"
               className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-black sm:text-sm transition duration-150 ease-in-out cursor-pointer"
               placeholder="name of novel"
+              value={searchBar}
+              onChange={(e) => setSearchBar(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  search();
+                }
+              }}
             />
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
@@ -291,10 +321,10 @@ export default function MovieDashboard() {
             <button
               onClick={() => setIsModalOpen(true)}
               disabled={isEditMode}
-              className={`h-[280px] rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 transition gap-2 group ${isEditMode ? "opacity-50 cursor-not-allowed" : "hover:text-blue-500 hover:border-blue-400 hover:bg-blue-50"}`}
+              className={`h-[280px] rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 transition gap-2 group ${isEditMode ? "opacity-50 cursor-not-allowed" : "hover:bg-white/30"}`}
             >
               <div
-                className={`w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center transition ${!isEditMode && "group-hover:bg-blue-100"}`}
+                className={`w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center transition ${!isEditMode}`}
               >
                 <PlusIcon className="w-6 h-6" />
               </div>

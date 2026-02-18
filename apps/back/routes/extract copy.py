@@ -11,7 +11,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from googletrans import Translator
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline 
-from rembg import remove # เพิ่ม Library สำหรับลบพื้นหลัง
 
 from database import get_session
 from models import chapterContent, character, entity, chunkContent 
@@ -31,9 +30,9 @@ stabilityModel = "stabilityai/stable-diffusion-xl-base-1.0"
 # loraPath removed
 
 # Limits
-MAX_TAGS = 20 
+MAX_TAGS = 10 
 
-# Blocklist: คำทั่วไปที่ไม่ควรเป็นชื่อตัวละคร
+# Blocklist: คำทั่วไปที่ไม่ควรเป็นชื่อตัวละคร (เพิ่ม first, second, third...)
 GENERIC_NAMES = {
     "man", "woman", "boy", "girl", "child", "kid", "baby", "children",
     "uncle", "aunt", "father", "mother", "dad", "mom", "parent", "parents",
@@ -47,7 +46,9 @@ GENERIC_NAMES = {
     "shixiong", "shidi", "shijie", "shimei", "boss", "chief", "leader",
     "younger brother", "older brother", "big brother", "little brother",
     "younger sister", "older sister", "big sister", "little sister",
-    "third uncle", "second uncle", "fourth uncle" 
+    "third uncle", "second uncle", "fourth uncle",
+    "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth",
+    "number one", "number two", "number three"
 }
 
 # Blocklist: Tag ที่ไม่มีประโยชน์ในการ Gen ภาพ หรือซ้ำซ้อนกับ Gender
@@ -158,7 +159,6 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                 desc = limited_desc if limited_desc else "character"
                 
                 # --- Prompt Engineering (Character) ---
-                # Positive: เน้นยืนนิ่ง มือเปล่า แขนแนบลำตัว คนเดียว
                 prompt = (
                     f"ancient chinese style, {desc}, full body shot, standing still, "
                     f"arms at sides, empty hands, looking directly at camera, "
@@ -166,7 +166,6 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                     f"high quality, simple white background, solo, single person"
                 )
                 
-                # Negative: เพิ่ม holding object, multiple people
                 negative_prompt = (
                     "shadows, harsh lighting, cropped, cinematic lighting, hands on face, "
                     "distorted face, profile view, looking away, busy background, blurry, "
@@ -184,10 +183,6 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                     guidance_scale=7.0
                 ).images[0]
                 
-                # --- Remove Background (Character) ---
-                print(f"Removing background for {char_obj.name}...")
-                image = remove(image)
-                
                 filename = f"storage/characters/{char_obj.id}.png"
                 image.save(f"public/{filename}")
                 
@@ -197,13 +192,10 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
             except Exception as e:
                 print(f"❌ Error generating character {char_obj.name}: {e}")
 
-        # Loop สร้างภาพ Entities (Items/Locations)
+        # Loop สร้างภาพ Entities
         for ent_obj in ents_to_gen:
             try:
-                # Limit Visual Tags
                 v_tags_list = [t.strip() for t in ent_obj.visual_tags.split(',') if t.strip()]
-                
-                # Deduplicate
                 seen = set()
                 deduped_tags = []
                 for t in v_tags_list:
@@ -212,30 +204,25 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                         seen.add(t.lower())
 
                 desc = ", ".join(deduped_tags[:MAX_TAGS])
-                
                 e_type_lower = ent_obj.type.lower()
                 
                 if "item" in e_type_lower:
-                    # Positive: Product shot, white bg
                     prompt = (
                         f"ancient chinese style object, {desc}, product photography, centered shot, "
                         f"isolated on white background, studio lighting, soft shadows, high detail, "
                         f"8k, sharp focus, realistic texture, professional lighting"
                     )
-                    # Negative
                     negative_prompt = (
                         "nsfw, nude, naked, 18+, human, hands, holding, fingers, person, "
                         "messy background, text, watermark, blurry, low quality, distortion, "
                         "cropped, out of frame, worst quality"
                     )
-                else: # Location
-                    # Positive: Wide angle, clean
+                else: 
                     prompt = (
                         f"ancient chinese architecture, {desc}, establishing shot, wide angle view, "
                         f"highly detailed, realistic, 8k, cinematic lighting, depth of field, "
                         f"interior design, atmosphere, sharp focus"
                     )
-                    # Negative
                     negative_prompt = (
                         "nsfw, nude, naked, 18+, people, crowd, humans, animals, text, watermark, "
                         "blurry, low quality, distortion, simple background, white background, "
@@ -252,11 +239,6 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                     guidance_scale=7.0
                 ).images[0]
                 
-                # --- Remove Background (Item Only) ---
-                if "item" in e_type_lower:
-                    print(f"Removing background for item: {ent_obj.name}...")
-                    image = remove(image)
-                
                 filename = f"storage/entities/{ent_obj.id}.png"
                 image.save(f"public/{filename}")
                 
@@ -267,7 +249,6 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                 print(f"❌ Error generating entity {ent_obj.name}: {e}")
                 
     finally:
-        # Cleanup Memory
         print("🧹 Cleaning up model from memory...")
         if pipeline:
             del pipeline
@@ -370,11 +351,13 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
     Extract Entity information (Character, Location, Item) from the Input Text into a valid JSON format.
 
     Rules:
-    1. "IdentityTags": Fixed physical traits (hair color, eye color, race, gender).
-    2. "ModifierTags": Changeable traits (clothing, emotions, dirt, poses).
+    1. "IdentityTags": Physical appearance ONLY (face, body, height, skin, hair, eyes, age). Use descriptive Stable Diffusion tags (e.g., tall, muscular, pale skin, rugged). Avoid generic terms like 'man', 'woman'.
+    2. "ModifierTags": Clothing, outfit, and accessories ONLY (e.g., black robe, armor, glasses). Format as comma-separated Stable Diffusion tags. Do NOT include actions, emotions, or non-clothing objects.
     3. Use the "first appearance" for changing traits.
     4. Tags must be nouns/adjectives only. No verbs.
     5. English output only.
+    6. "gender": Identify as Male, Female, or Unknown.
+    7. Distinction: Treat 'Second Brother' and 'Second Idiot' as separate characters. Do not combine them.
 
     Output JSON Format:
     {{
@@ -382,6 +365,7 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
             {{
                 "type": "Character",
                 "name": "Name",
+                "gender": "Male",
                 "altNames": [],
                 "IdentityTags": "tag1, tag2",
                 "ModifierTags": "tag1, tag2"
