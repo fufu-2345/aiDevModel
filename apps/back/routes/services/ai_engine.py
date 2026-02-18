@@ -2,28 +2,14 @@ import os
 import gc
 import json
 import re
-import time
 import asyncio
-import traceback
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageOps
 import httpx
 import torch
-from diffusers import (
-    AutoPipelineForInpainting, 
-    StableDiffusionXLInpaintPipeline, 
-    StableDiffusionInpaintPipeline
-)
-from transformers import CLIPVisionModelWithProjection
+from diffusers import StableDiffusionXLPipeline
 from dotenv import load_dotenv
 
-# ✅ Import rembg
-try:
-    from rembg import remove as remove_bg
-    HAS_REMBG = True
-except ImportError:
-    print("⚠️ 'rembg' not installed. Background removal will be skipped.")
-    HAS_REMBG = False
-
+# พยายาม import psutil
 try:
     import psutil
 except ImportError:
@@ -32,268 +18,197 @@ except ImportError:
 load_dotenv()
 
 # ================= CONFIG =================
-IMG_WIDTH = 1024
-IMG_HEIGHT = 768
-NUM_STEPS = 25 
-CHAR_STEPS = 30 
+# ความละเอียดภาพสุดท้าย (Visual Novel Standard)
+IMG_WIDTH = 1280
+IMG_HEIGHT = 720
 
+# Model Paths
 ollamaURL = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api/generate")
 ollamaModel = os.getenv("OLLAMA_MODEL", "gemma3:12b")
 stabilityModel = "C:\\stability matrix\\Data\\Models\\StableDiffusion\\juggernautXL_ragnarokBy.safetensors"
 
-IP_ADAPTER_REPO = "h94/IP-Adapter" 
-IP_ADAPTER_SUBFOLDER = "sdxl_models"
-IP_ADAPTER_FILENAME = "ip-adapter-plus-face_sdxl_vit-h.bin"
-
 # ================= UTILS =================
-def log_memory_usage(label=""):
-    if psutil:
-        mem = psutil.virtual_memory()
-        print(f"   📊 RAM [{label}]: Used {mem.percent}% | Free {mem.available / 1024**3:.2f} GB")
-        return mem.percent
-    return 0
-
 def flush_memory():
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-async def wait_for_memory(threshold=85):
-    if not psutil: return
-    if log_memory_usage("Pre-Check") > 90:
-        print("   ⏳ High RAM, waiting 10s...")
-        await asyncio.sleep(10)
-        flush_memory()
-    for _ in range(5): 
-        if log_memory_usage("Check") < threshold: return
-        flush_memory()
-        await asyncio.sleep(2)
-
-def clean_prompt(text):
-    if isinstance(text, list): text = ", ".join(text)
-    if not isinstance(text, str): return ""
-    text = re.sub(r"[\[\]\{\}\"']", "", text)
-    text = re.sub(r"\w+\s*:\s*", "", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+def log_memory():
+    if psutil:
+        mem = psutil.virtual_memory()
+        print(f"   📊 RAM: {mem.percent}%")
 
 # ================= OLLAMA LOGIC =================
+async def analyze_script_content(chunk_text: str, client: httpx.AsyncClient):
+    """
+    Phase 1: อ่านบทเพื่อดูว่า 'ใคร' อยู่ 'ที่ไหน'
+    (ยังไม่สนใจ Visual Prompt ของฉาก สนใจแค่ชื่อสถานที่)
+    """
+    prompt = f"""
+    Role: Visual Novel Director.
+    Task: Analyze script for logistics.
+    Input Story: "{chunk_text}"
+    
+    Rules:
+    1. 'location_name': Specific, consistent name of the location (e.g. "Village Entrance", "Han Li's Room").
+    2. 'characters': List Names of characters present (Max 3 key characters).
+    
+    Output JSON: {{ "location_name": "...", "characters": ["Name1", "Name2"] }}
+    """
+    try:
+        # print(f"   [Ollama] extracting meta...")
+        res = await client.post(ollamaURL, json={"model": ollamaModel, "prompt": prompt, "stream": False, "format": "json"}, timeout=300.0)
+        clean_json = re.sub(r'```json\s*', '', res.json().get("response", "")).replace('```', '')
+        match = re.search(r'\{.*\}', clean_json, re.DOTALL)
+        return json.loads(match.group(0)) if match else None
+    except Exception as e:
+        print(f"❌ Meta Analysis Failed: {e}")
+        return None
+
+async def generate_location_prompt(location_name: str, context_text: str, client: httpx.AsyncClient):
+    """
+    Phase 2: ถ้าสถานที่นี้ยังไม่มีรูป -> ให้ AI ออกแบบ Visual Prompt สำหรับ SDXL
+    """
+    prompt = f"""
+    Role: Environment Artist.
+    Task: Write a Stable Diffusion prompt for a background image.
+    Location: "{location_name}"
+    Context: "{context_text}"
+    
+    Rules:
+    1. Output KEYWORDS only, comma separated.
+    2. Visual Novel / Anime background style.
+    3. NO CHARACTERS, NO PEOPLE. Just the scenery.
+    4. Atmosphere, lighting, time of day.
+    
+    Output string: "keyword1, keyword2, ..."
+    """
+    try:
+        print(f"   [Ollama] Designing Location: {location_name}...")
+        res = await client.post(ollamaURL, json={"model": ollamaModel, "prompt": prompt, "stream": False}, timeout=300.0)
+        return res.json().get("response", "").strip()
+    except Exception as e:
+        print(f"❌ Design Failed: {e}")
+        return f"anime style background, {location_name}, masterpiece, no humans"
+
 async def unload_ollama(client: httpx.AsyncClient):
     try:
         await client.post(ollamaURL, json={"model": ollamaModel, "keep_alive": 0})
         print("   ✅ Ollama Unloaded.")
     except: pass
 
-async def analyze_scene(chunk_text: str, client: httpx.AsyncClient):
-    await wait_for_memory()
-    
-    prompt = f"""
-    Role: Visual Director. Task: Extract keywords. Input: "{chunk_text}"
-    Output JSON: {{ 
-        "environment": "keywords...", 
-        "characters": [ {{ "name": "...", "position": "LEFT/CENTER/RIGHT", "depth": "FOREGROUND/MID_GROUND/BACKGROUND", "visual_action": "action keywords" }} ] 
-    }}
-    """
-    try:
-        print(f"   [Ollama] Analyzing...")
-        res = await client.post(ollamaURL, json={"model": ollamaModel, "prompt": prompt, "stream": False, "format": "json"}, timeout=300.0)
-        clean_json = re.sub(r'```json\s*', '', res.json().get("response", "")).replace('```', '')
-        match = re.search(r'\{.*\}', clean_json, re.DOTALL)
-        return json.loads(match.group(0)) if match else None
-    except Exception as e:
-        print(f"❌ Analysis Failed: {e}")
-        return None
-
-# ================= SDXL LOGIC =================
-class SDEngine:
+# ================= SDXL LOGIC (Background Only) =================
+class BGGenerator:
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.dtype = torch.float16 if self.device == "cuda" else torch.float32
-        
+        self.pipe = None
+
     def load_pipeline(self):
-        print(f"   🚀 Loading SDXL ({self.device})...")
+        if self.pipe: return self.pipe
         
+        print(f"   🚀 Loading SDXL for Background ({self.device})...")
         try:
-            image_encoder = CLIPVisionModelWithProjection.from_pretrained(
-                "h94/IP-Adapter", subfolder="models/image_encoder", torch_dtype=self.dtype, local_files_only=True
-            )
-        except:
-            image_encoder = CLIPVisionModelWithProjection.from_pretrained(
-                "h94/IP-Adapter", subfolder="models/image_encoder", torch_dtype=self.dtype
-            )
-
-        PipelineClass = StableDiffusionXLInpaintPipeline if "xl" in stabilityModel.lower() else StableDiffusionInpaintPipeline
-        
-        try:
+            # ใช้ Text-to-Image ธรรมดา (ไม่ต้อง Inpaint)
             if stabilityModel.endswith(".safetensors"):
-                pipe = PipelineClass.from_single_file(stabilityModel, torch_dtype=self.dtype, image_encoder=image_encoder, use_safetensors=True)
+                self.pipe = StableDiffusionXLPipeline.from_single_file(stabilityModel, torch_dtype=self.dtype, use_safetensors=True)
             else:
-                pipe = PipelineClass.from_pretrained(stabilityModel, torch_dtype=self.dtype, image_encoder=image_encoder)
-        except:
-            pipe = PipelineClass.from_pretrained(stabilityModel, torch_dtype=self.dtype, image_encoder=image_encoder, use_safetensors=False)
+                self.pipe = StableDiffusionXLPipeline.from_pretrained(stabilityModel, torch_dtype=self.dtype)
+        except Exception as e:
+            print(f"   ⚠️ Load failed: {e}")
+            return None
 
-        if hasattr(pipe, "safety_checker"): pipe.safety_checker = None
-        
-        try: pipe.enable_vae_slicing()
-        except: pass
-        if self.device == "cuda": pipe.enable_model_cpu_offload()
-        else: pipe.to(self.device)
-        
-        pipe.load_ip_adapter(IP_ADAPTER_REPO, subfolder=IP_ADAPTER_SUBFOLDER, weight_name=IP_ADAPTER_FILENAME)
-        
-        return pipe
-
-    # ✅ FIXED: ระบบ Slot แบ่งช่องชัดเจน กันคนซ้อนกัน
-    def get_smart_coords(self, pos, depth, w, h, occupied_slots=[]):
-        p = pos.upper()
-        d = depth.upper()
-        
-        # 1. กำหนดขนาดตามระยะ (Scale) - ปรับให้กว้างขึ้นและสูงขึ้นแก้แขนหาย/หัวหาย
-        if "FORE" in d: 
-            scale_h = 0.90 # เกือบเต็มจอแนวตั้ง
-            scale_w = 0.40 # กว้างหน่อย
-            y_start = int(h * 0.05) # เริ่มเกือบติดขอบบน (แก้หัวขาด)
-        elif "MID" in d: 
-            scale_h = 0.70 
-            scale_w = 0.30 
-            y_start = int(h * 0.25)
-        else: # BACK
-            scale_h = 0.50 
-            scale_w = 0.20 
-            y_start = int(h * 0.45)
-
-        char_h = int(h * scale_h)
-        char_w = int(w * scale_w)
-        bottom_y = y_start + char_h
-
-        # 2. กำหนดตำแหน่ง X แบบ Slot (กันทับกัน)
-        # แบ่งหน้าจอเป็น 3 ส่วน: 0-33%, 34-66%, 67-100%
-        # แต่ละส่วนมี "จุดกึ่งกลาง" (Center Point) ของตัวเอง
-        
-        # ซ้าย
-        if "LEFT" in p:
-            slot_center = int(w * 0.20) 
-        # ขวา
-        elif "RIGHT" in p:
-            slot_center = int(w * 0.80)
-        # กลาง (Default)
-        else: 
-            slot_center = int(w * 0.50)
-
-        # 🛑 Collision Check (แบบง่าย): ถ้าเลนนี้เต็มแล้ว ให้ขยับนิดหน่อย
-        # (Logic นี้อาจต้องพัฒนาต่อถ้ามีคนเยอะมาก แต่เบื้องต้นใช้ Random jitter หรือ Offset)
-        if p in occupied_slots:
-            if "LEFT" in p: slot_center += int(w * 0.1) # ขยับเข้ากลางนิดนึง
-            elif "RIGHT" in p: slot_center -= int(w * 0.1)
-            elif "CENTER" in p: slot_center += int(w * 0.15) # หลบไปขวาหน่อย
-
-        start_x = slot_center - (char_w // 2)
-        end_x = start_x + char_w
-        
-        # Boundary Check (กันตกขอบจอ)
-        if start_x < 0: 
-            start_x = 0
-            end_x = char_w
-        if end_x > w:
-            end_x = w
-            start_x = w - char_w
-        if bottom_y > h: 
-            bottom_y = h
-
-        return (start_x, y_start, end_x, bottom_y)
-
-    def process_character_image(self, img_path):
-        if not os.path.exists(img_path): return None
-        return Image.open(img_path).convert("RGB")
-
-    def run(self, scene_plan, output_path, character_refs):
-        log_memory_usage("Start SD")
-        pipe = None
-        try:
-            pipe = self.load_pipeline()
-            
-            env_desc = clean_prompt(scene_plan.get('environment', 'scene'))
-            STYLE = "masterpiece, best quality, photorealistic, 8k, raw photo, ancient chinese wuxia style"
-            
-            # ✅ เพิ่ม Negative Prompt ดักเรื่องร่างกาย
-            NEG = "people, humans, person, crowd, modern, western, ugly, blurry, watermark, text, bad anatomy, deformed body, missing head, cropped head, missing arms, extra limbs, floating limbs, mutated"
-            
-            base_prompt = f"{STYLE}, {env_desc}, (no humans:1.5), empty scenery, masterpiece"
-            
-            dummy_ref = Image.new("RGB", (224, 224), "black")
-
-            # 1. Gen Background
-            print("   Generating Background...")
-            pipe.set_ip_adapter_scale(0.0)
-            base_image = pipe(
-                prompt=base_prompt, negative_prompt=NEG,
-                image=Image.new("RGB", (IMG_WIDTH, IMG_HEIGHT), (128,128,128)),
-                mask_image=Image.new("L", (IMG_WIDTH, IMG_HEIGHT), "white"),
-                ip_adapter_image=dummy_ref, 
-                height=IMG_HEIGHT, width=IMG_WIDTH, num_inference_steps=NUM_STEPS, strength=1.0
-            ).images[0]
-
-            try:
-                base_image.save(output_path.replace(".png", "_00_background.png"))
+        if self.device == "cuda":
+            self.pipe.enable_model_cpu_offload()
+        else:
+            self.pipe.to(self.device)
+            try: self.pipe.enable_vae_slicing() # ช่วย CPU
             except: pass
 
-            # 2. Add Characters
-            # Sort Depth: Back -> Fore
-            character_refs.sort(key=lambda x: 0 if "BACK" in x['depth'] else (1 if "MID" in x['depth'] else 2))
+        return self.pipe
+
+    def generate_bg(self, prompt, output_path):
+        pipe = self.load_pipeline()
+        if not pipe: return False
+        
+        log_memory()
+        print(f"   🎨 Generating BG: {prompt[:50]}...")
+        
+        style = "anime style background, visual novel background, highly detailed, 8k, masterpiece"
+        neg = "people, humans, person, text, watermark, bad quality, blurry, crowd"
+        
+        image = pipe(
+            prompt=f"{style}, {prompt}",
+            negative_prompt=neg,
+            height=768, width=1280, # แนวนอน 16:9
+            num_inference_steps=25,
+            guidance_scale=7.5
+        ).images[0]
+        
+        # Resize ให้ตรงเป๊ะกับ Canvas
+        image = image.resize((IMG_WIDTH, IMG_HEIGHT), Image.Resampling.LANCZOS)
+        image.save(output_path)
+        return True
+
+# ================= COMPOSITION LOGIC (The Visual Novel Part) =================
+class VNComposer:
+    def process_character(self, img_path):
+        """โหลดรูปตัวละคร (ที่ตัดพื้นหลังมาแล้ว)"""
+        if not os.path.exists(img_path): return None
+        return Image.open(img_path).convert("RGBA")
+
+    def compose(self, bg_path, character_paths, output_path):
+        """
+        รวมร่าง: BG + ตัวละครตามจำนวน
+        """
+        # 1. โหลด Background
+        if bg_path and os.path.exists(bg_path):
+            bg = Image.open(bg_path).convert("RGBA")
+        else:
+            print("   ❌ BG not found, creating black canvas.")
+            bg = Image.new("RGBA", (IMG_WIDTH, IMG_HEIGHT), "black")
             
-            occupied_slots = [] # เก็บประวัติว่าเลนไหนมีคนยืนแล้ว
+        bg = bg.resize((IMG_WIDTH, IMG_HEIGHT), Image.Resampling.LANCZOS)
 
-            for i, char in enumerate(character_refs):
-                name = char['name']
-                ref_path = char['ref_path']
-                position_key = char['position']
-                
-                print(f"   👤 Processing: {name} ({char['depth']}) | Ref: {os.path.basename(ref_path)}")
-                
-                ref_image = self.process_character_image(ref_path)
-                if not ref_image: continue
-
-                # ✅ ส่ง occupied_slots ไปเช็คชน
-                x1, y1, x2, y2 = self.get_smart_coords(position_key, char['depth'], IMG_WIDTH, IMG_HEIGHT, occupied_slots)
-                occupied_slots.append(position_key) # จดไว้ว่าเลนนี้ใช้แล้ว
-
-                # สร้าง Mask
-                mask = Image.new("L", (IMG_WIDTH, IMG_HEIGHT), 0)
-                draw = ImageDraw.Draw(mask)
-                draw.rectangle((x1, y1, x2, y2), fill=255)
-                mask = mask.filter(ImageFilter.GaussianBlur(radius=10)) 
-                
-                pipe.set_ip_adapter_scale(0.85) 
-                
-                action = char['visual_action']
-                # ✅ เพิ่ม "centered in frame, wide shot" เพื่อให้กล้องถอยออกมาหน่อย ไม่ซูมจนหัวขาด
-                prompt = f"{STYLE}, full body shot of {name}, standing, {action}, highly detailed face, sharp eyes, masterpiece, centered in frame, wide shot, fitting in frame"
-                print(f"      Prompt: {prompt}")
-
-                base_image = pipe(
-                    prompt=prompt, negative_prompt=NEG,
-                    image=base_image,
-                    mask_image=mask,
-                    ip_adapter_image=ref_image, 
-                    height=IMG_HEIGHT, width=IMG_WIDTH,
-                    num_inference_steps=CHAR_STEPS, 
-                    strength=1.0, 
-                    guidance_scale=7.5
-                ).images[0]
-
-                try:
-                    safe_name = re.sub(r'[^a-zA-Z0-9]', '_', name)
-                    base_image.save(output_path.replace(".png", f"_{i+1:02d}_{safe_name}.png"))
-                except: pass
-
-            base_image.save(output_path)
-            print(f"✅ Saved: {output_path}")
-            return True
+        # 2. กรองเฉพาะรูปที่โหลดได้จริง
+        valid_chars = []
+        for p in character_paths:
+            img = self.process_character(p)
+            if img: valid_chars.append(img)
             
-        except Exception as e:
-            print(f"❌ SD Run Error: {e}")
-            traceback.print_exc()
-            return False
-        finally:
-            if 'pipe' in locals() and pipe is not None: del pipe
-            flush_memory()
+        count = len(valid_chars)
+        # print(f"   👥 Placing {count} characters...")
+
+        # 3. คำนวณตำแหน่ง (Visual Novel Style)
+        # Scale ตัวละคร: ให้สูงประมาณ 85% ของฉาก
+        char_target_h = int(IMG_HEIGHT * 0.85)
+        
+        positions = []
+        if count == 1:
+            positions = [0.5] # กลาง
+        elif count == 2:
+            positions = [0.25, 0.75] # ซ้าย, ขวา
+        elif count >= 3:
+            positions = [0.2, 0.5, 0.8] # ซ้าย, กลาง, ขวา (เอาแค่ 3 คนแรก)
+            valid_chars = valid_chars[:3]
+
+        # 4. วางตัวละคร
+        for i, char_img in enumerate(valid_chars):
+            # Resize
+            aspect_ratio = char_img.width / char_img.height
+            new_w = int(char_target_h * aspect_ratio)
+            char_img = char_img.resize((new_w, char_target_h), Image.Resampling.LANCZOS)
+            
+            # คำนวณ X, Y
+            center_x = int(IMG_WIDTH * positions[i])
+            paste_x = center_x - (new_w // 2)
+            paste_y = IMG_HEIGHT - char_target_h + 30 # ชิดขอบล่าง (เผื่อเหลื่อมนิดหน่อย)
+            
+            # Paste with Alpha
+            bg.alpha_composite(char_img, dest=(paste_x, paste_y))
+
+        # 5. Save Final
+        final_img = bg.convert("RGB")
+        final_img.save(output_path)
+        print(f"   ✅ Scene Saved: {os.path.basename(output_path)}")
+        return True

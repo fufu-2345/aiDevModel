@@ -97,6 +97,24 @@ export default function ChapterReaderPage({
     fetchChapter();
   }, [chapterId]);
 
+  const extractGen = async () => {
+    try {
+      const response1 = await fetch(
+        `http://127.0.0.1:8000/extractEntities/${chapterId}`,
+      );
+      const data1 = await response1.json();
+      console.log("done extract/ ", data1);
+
+      const response2 = await fetch(
+        `http://127.0.0.1:8000/createPic/generate-images/${chapterId}`,
+      );
+      const data2 = await response2.json();
+      console.log("done generateImages ", data2);
+    } catch (error) {
+      console.error("err API:", error);
+    }
+  };
+
   const genPic = async () => {
     try {
       const response = await fetch(
@@ -191,7 +209,7 @@ export default function ChapterReaderPage({
             </div>
             <div className="flex gap-2 ml-4">
               <button
-                onClick={() => genPic()}
+                onClick={() => extractGen()}
                 className=" py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
               >
                 Gen Pic

@@ -386,7 +386,7 @@ def get_chunks_analysis(
     if len(combined_audio) > 0:
         output_dir = os.path.abspath("output_audio")
         os.makedirs(output_dir, exist_ok=True)
-        output_filename = f"chapter_{chapter_id}_full.mp3"
+        output_filename = f"{chapter_id}.mp3"
         output_file_path = os.path.join(output_dir, output_filename)
         
         print(f"[+] Saving audio to: {output_file_path}", flush=True)
