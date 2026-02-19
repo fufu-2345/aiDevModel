@@ -80,3 +80,10 @@ class user(SQLModel, table=True):
     role: str = Field(default="user")
     emailL: str
     password: str 
+    
+class matcher(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    character: str
+    location: str
+    duration: str
+    chapterId: Optional[int] = Field(default=None, foreign_key="chaptercontent.id")

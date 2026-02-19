@@ -1,7 +1,8 @@
 import asyncio
 import time
 import os
-from typing import List, Dict, Any
+import difflib 
+from typing import List, Dict, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select, create_engine, SQLModel 
@@ -9,14 +10,24 @@ import httpx
 from dotenv import load_dotenv 
 
 # Import Service
-from .services.ai_engine import (
-    analyze_script_content, 
-    generate_location_prompt,
-    unload_ollama, 
-    flush_memory, 
-    BGGenerator, 
-    VNComposer
-)
+try:
+    from .services.ai_engine import (
+        analyze_script_content, 
+        generate_location_prompt,
+        unload_ollama, 
+        flush_memory, 
+        BGGenerator, 
+        VNComposer
+    )
+except ImportError:
+    from services.ai_engine import (
+        analyze_script_content, 
+        generate_location_prompt,
+        unload_ollama, 
+        flush_memory, 
+        BGGenerator, 
+        VNComposer
+    )
 
 # ==========================================
 # 1. IMPORTS & SETUP
@@ -50,33 +61,63 @@ def get_session():
 
 router = APIRouter(prefix="/createPic", tags=["createPic"])
 
+# ✅ ปรับ Path ตามที่ขอ
 OUTPUT_DIR = "public/storage/pic/"
 CHAR_DIR = "public/storage/characters/"
-BG_DIR = "public/storage/backgrounds/" 
+ENTITIES_DIR = "public/storage/entities/" # เก็บรูปสถานที่ตาม ID
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs(BG_DIR, exist_ok=True)
+os.makedirs(ENTITIES_DIR, exist_ok=True)
 
 # ==========================================
-# 2. DB HELPERS
+# 2. PATH HELPERS
 # ==========================================
 
-def find_location_in_db(session: Session, movie_id: int, loc_name: str):
-    """คืนค่า entity object หรือ None"""
+def resolve_file_path(db_path: str) -> Optional[str]:
+    """
+    แปลง Path จาก DB (storage/...) ให้เป็น System Path ที่ Python อ่านได้ (public/storage/...)
+    """
+    if not db_path: return None
+    
+    # 1. เช็ค Path ตรงๆ
+    if os.path.exists(db_path): return db_path
+    
+    # 2. ถ้าไม่มี public/ ให้ลองเติมดู
+    if not db_path.startswith("public/"):
+        public_path = os.path.join("public", db_path)
+        if os.path.exists(public_path): return public_path
+        
+    return None
+
+# ==========================================
+# 3. SMART DB HELPERS (Fuzzy Logic)
+# ==========================================
+
+def find_smart_location(session: Session, movie_id: int, loc_name: str) -> Optional[entity]:
     if not loc_name: return None
-    # 1. Main
-    loc = session.exec(select(entity).where(
+    
+    # 1. Exact Match
+    exact_loc = session.exec(select(entity).where(
         entity.movieId == movie_id, 
         entity.type == "Location",
-        entity.name.ilike(f"%{loc_name}%")
+        entity.name.ilike(loc_name)
     )).first()
-    if loc: return loc
-    # 2. Alt
-    alt = session.exec(select(entity).join(altEntity).where(
+    if exact_loc: return exact_loc
+
+    # 2. Fuzzy Match
+    all_locs = session.exec(select(entity).where(
         entity.movieId == movie_id,
-        entity.type == "Location",
-        altEntity.altName.ilike(f"%{loc_name}%")
-    )).first()
-    return alt
+        entity.type == "Location"
+    )).all()
+    
+    loc_map = {l.name.lower(): l for l in all_locs}
+    matches = difflib.get_close_matches(loc_name.lower(), loc_map.keys(), n=1, cutoff=0.7)
+    
+    if matches:
+        matched_name = matches[0]
+        print(f"      💡 Fuzzy Matched: '{loc_name}' -> '{matched_name}'")
+        return loc_map[matched_name]
+        
+    return None
 
 def find_character_path(session: Session, movie_id: int, char_name: str):
     if not char_name: return None
@@ -98,7 +139,7 @@ def find_character_path(session: Session, movie_id: int, char_name: str):
     return None
 
 # ==========================================
-# 3. MAIN BATCH PROCESS
+# 4. MAIN BATCH PROCESS
 # ==========================================
 
 @router.get("/generate-images/{chapter_id}")
@@ -113,8 +154,8 @@ async def generate_images_for_chapter(
         return {"status": "error", "message": "No data found."}
     
     movie_id = chapter_info.movieId
-    tasks_to_do = [] # [{chunk_id, location_name, characters}]
-    missing_locations = {} # {location_name: {"prompt": str, "db_entity": obj or None}}
+    tasks_to_do = [] 
+    missing_locations = {} # {loc_name: {prompt, db_entity}}
 
     print("🔵 [PHASE 1] Script Analysis (Ollama)...")
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -141,19 +182,19 @@ async def generate_images_for_chapter(
             })
 
             # 2. Check Location in DB
-            loc_entity = find_location_in_db(session, movie_id, loc_name)
+            loc_entity = find_smart_location(session, movie_id, loc_name)
             
-            # ถ้ามีใน DB แต่ไม่มีไฟล์ -> ต้องเจน
-            # ถ้าไม่มีใน DB -> ต้องเจน และสร้าง DB ใหม่
-            has_file = loc_entity and loc_entity.refpath and os.path.exists(loc_entity.refpath)
+            # เช็คว่ามีไฟล์จริงไหม (ใช้ resolve_file_path ช่วยเช็ค)
+            real_path = resolve_file_path(loc_entity.refpath) if loc_entity else None
+            has_file = real_path is not None
             
             if not has_file and loc_name not in missing_locations:
-                print(f"   ❓ Missing BG for: {loc_name}")
-                # Ask Ollama for visual prompt
+                print(f"   ❓ Missing BG for: '{loc_name}'")
+                
                 bg_prompt = await generate_location_prompt(loc_name, text_input, client)
                 missing_locations[loc_name] = {
                     "prompt": bg_prompt,
-                    "db_entity": loc_entity, # อาจเป็น None ถ้ายังไม่เคยมี record
+                    "db_entity": loc_entity, # ส่ง Entity เดิมไปถ้ามี
                     "refpath": None
                 }
 
@@ -168,33 +209,41 @@ async def generate_images_for_chapter(
             bg_gen = BGGenerator()
             
             for loc_name, data in missing_locations.items():
-                safe_name = "".join([c for c in loc_name if c.isalnum() or c in (' ','-','_')]).strip()
-                bg_filename = f"bg_{movie_id}_{safe_name}_{int(time.time())}.png"
-                bg_path = os.path.join(BG_DIR, bg_filename)
                 
-                # Generate SDXL (Run in thread)
-                success = await asyncio.to_thread(bg_gen.generate_bg, data['prompt'], bg_path)
+                # 1. เตรียม Entity & ID เพื่อตั้งชื่อไฟล์
+                loc_entity = data['db_entity']
+                if not loc_entity:
+                    print(f"      💾 Creating New DB Location: {loc_name}")
+                    loc_entity = entity(
+                        type="Location",
+                        name=loc_name,
+                        visual_tags=data['prompt'],
+                        movieId=movie_id,
+                        refpath="" # ใส่ว่างไว้ก่อน
+                    )
+                    session.add(loc_entity)
+                    session.commit()
+                    session.refresh(loc_entity) # ✅ ได้ ID มาแล้ว
+                    data['db_entity'] = loc_entity
+                
+                # 2. ตั้งชื่อไฟล์ตาม ID
+                entity_id = loc_entity.id
+                filename = f"{entity_id}.png"
+                fs_path = os.path.join(ENTITIES_DIR, filename)       # path จริงในเครื่อง
+                db_refpath = f"storage/entities/{filename}"          # path ที่เก็บใน DB
+                
+                # 3. Generate Image
+                success = await asyncio.to_thread(bg_gen.generate_bg, data['prompt'], fs_path)
                 
                 if success:
-                    data['refpath'] = bg_path
-                    # Save/Update DB
-                    if data['db_entity']:
-                        # Update existing entity
-                        data['db_entity'].refpath = bg_path
-                        session.add(data['db_entity'])
-                    else:
-                        # Create new entity
-                        new_loc = entity(
-                            type="Location",
-                            name=loc_name,
-                            visual_tags=data['prompt'],
-                            movieId=movie_id,
-                            refpath=bg_path
-                        )
-                        session.add(new_loc)
+                    data['refpath'] = fs_path # เก็บ Path จริงไว้ใช้ใน Phase 3
+                    
+                    # 4. Update DB
+                    print(f"      💾 Updating DB Refpath: {db_refpath}")
+                    loc_entity.refpath = db_refpath
+                    session.add(loc_entity)
                     session.commit()
             
-            # Clear SDXL from memory
             del bg_gen
             flush_memory()
 
@@ -206,14 +255,17 @@ async def generate_images_for_chapter(
         for task in tasks_to_do:
             loc_name = task['location_name']
             
-            # หา BG Path (priority: เพิ่งเจนใหม่ -> ใน DB)
             bg_path = None
+            
+            # 1. เช็คจากคิวที่เพิ่งเจน (Path จริง)
             if loc_name in missing_locations and missing_locations[loc_name]['refpath']:
                 bg_path = missing_locations[loc_name]['refpath']
-            else:
-                loc_entity = find_location_in_db(session, movie_id, loc_name)
-                if loc_entity and loc_entity.refpath:
-                    bg_path = loc_entity.refpath
+            
+            # 2. ถ้าไม่มี ให้หาจาก DB แล้วแปลงเป็น Path จริง
+            if not bg_path:
+                loc_entity = find_smart_location(session, movie_id, loc_name)
+                if loc_entity:
+                    bg_path = resolve_file_path(loc_entity.refpath)
 
             # หา Character Paths
             char_paths = []

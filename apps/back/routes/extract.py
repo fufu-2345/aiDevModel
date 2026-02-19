@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from googletrans import Translator
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline 
-from rembg import remove # เพิ่ม Library สำหรับลบพื้นหลัง
+from rembg import remove 
 
 from database import get_session
 from models import chapterContent, character, entity, chunkContent 
@@ -28,7 +28,9 @@ extractModel = "gemma3:12b"
 
 # Image Generation Config
 stabilityModel = "stabilityai/stable-diffusion-xl-base-1.0" 
-# loraPath removed
+
+# Toggle Entity Image Generation
+GENERATE_ENTITY_IMAGES = True # Set to False to skip generating images for Items/Entities
 
 # Limits
 MAX_TAGS = 20 
@@ -104,21 +106,25 @@ def load_image_pipe():
     return pipe
 
 def generate_images_for_missing_refpaths(session: Session, movie_id: int):
-    """สร้างภาพให้ตัวละคร/สถานที่ที่ยังไม่มีภาพ (refpath ว่าง)"""
+    """สร้างภาพให้ตัวละคร/วัตถุที่ยังไม่มีภาพ (refpath ว่าง)"""
     print(f"🎨 Starting Image Generation for Movie ID: {movie_id}")
     
-    # Query หาตัวที่ยังไม่มีรูป
+    # Query หาตัวที่ยังไม่มีรูป (Character)
     char_statement = select(character).where(
         character.movieId == movie_id,
         (character.refpath == "") | (character.refpath == None)
     )
     chars_to_gen = session.exec(char_statement).all()
 
-    ent_statement = select(entity).where(
-        entity.movieId == movie_id,
-        (entity.refpath == "") | (entity.refpath == None)
-    )
-    ents_to_gen = session.exec(ent_statement).all()
+    # Query หาตัวที่ยังไม่มีรูป (Entity - เฉพาะ Item)
+    # ตรวจสอบตัวแปร GENERATE_ENTITY_IMAGES
+    ents_to_gen = []
+    if GENERATE_ENTITY_IMAGES:
+        ent_statement = select(entity).where(
+            entity.movieId == movie_id,
+            (entity.refpath == "") | (entity.refpath == None)
+        )
+        ents_to_gen = session.exec(ent_statement).all()
 
     if not chars_to_gen and not ents_to_gen:
         print("✨ No missing images found.")
@@ -197,9 +203,15 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
             except Exception as e:
                 print(f"❌ Error generating character {char_obj.name}: {e}")
 
-        # Loop สร้างภาพ Entities (Items/Locations)
+        # Loop สร้างภาพ Entities (Items Only) - จะทำงานเฉพาะเมื่อ ents_to_gen มีข้อมูล
         for ent_obj in ents_to_gen:
             try:
+                e_type_lower = ent_obj.type.lower()
+                
+                # ข้ามถ้าไม่ใช่ Item (เผื่อมีข้อมูลเก่าที่เป็น Location หลงเหลืออยู่)
+                if "item" not in e_type_lower:
+                    continue
+
                 # Limit Visual Tags
                 v_tags_list = [t.strip() for t in ent_obj.visual_tags.split(',') if t.strip()]
                 
@@ -213,36 +225,20 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
 
                 desc = ", ".join(deduped_tags[:MAX_TAGS])
                 
-                e_type_lower = ent_obj.type.lower()
-                
-                if "item" in e_type_lower:
-                    # Positive: Product shot, white bg
-                    prompt = (
-                        f"ancient chinese style object, {desc}, product photography, centered shot, "
-                        f"isolated on white background, studio lighting, soft shadows, high detail, "
-                        f"8k, sharp focus, realistic texture, professional lighting"
-                    )
-                    # Negative
-                    negative_prompt = (
-                        "nsfw, nude, naked, 18+, human, hands, holding, fingers, person, "
-                        "messy background, text, watermark, blurry, low quality, distortion, "
-                        "cropped, out of frame, worst quality"
-                    )
-                else: # Location
-                    # Positive: Wide angle, clean
-                    prompt = (
-                        f"ancient chinese architecture, {desc}, establishing shot, wide angle view, "
-                        f"highly detailed, realistic, 8k, cinematic lighting, depth of field, "
-                        f"interior design, atmosphere, sharp focus"
-                    )
-                    # Negative
-                    negative_prompt = (
-                        "nsfw, nude, naked, 18+, people, crowd, humans, animals, text, watermark, "
-                        "blurry, low quality, distortion, simple background, white background, "
-                        "flat lighting, worst quality"
-                    )
+                # Positive: Product shot, white bg
+                prompt = (
+                    f"ancient chinese style object, {desc}, product photography, centered shot, "
+                    f"isolated on white background, studio lighting, soft shadows, high detail, "
+                    f"8k, sharp focus, realistic texture, professional lighting"
+                )
+                # Negative
+                negative_prompt = (
+                    "nsfw, nude, naked, 18+, human, hands, holding, fingers, person, "
+                    "messy background, text, watermark, blurry, low quality, distortion, "
+                    "cropped, out of frame, worst quality"
+                )
 
-                print(f"Generating Entity ({ent_obj.type}): {ent_obj.name}...")
+                print(f"Generating Item: {ent_obj.name}...")
                 image = pipeline(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
@@ -252,10 +248,9 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                     guidance_scale=7.0
                 ).images[0]
                 
-                # --- Remove Background (Item Only) ---
-                if "item" in e_type_lower:
-                    print(f"Removing background for item: {ent_obj.name}...")
-                    image = remove(image)
+                # --- Remove Background (Item) ---
+                print(f"Removing background for item: {ent_obj.name}...")
+                image = remove(image)
                 
                 filename = f"storage/entities/{ent_obj.id}.png"
                 image.save(f"public/{filename}")
@@ -264,7 +259,7 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                 session.add(ent_obj)
                 session.commit()
             except Exception as e:
-                print(f"❌ Error generating entity {ent_obj.name}: {e}")
+                print(f"❌ Error generating item {ent_obj.name}: {e}")
                 
     finally:
         # Cleanup Memory
@@ -291,6 +286,9 @@ async def translate_text(text: str) -> str:
     return text 
 
 async def create_and_save_chunks(session: Session, chapter: chapterContent):
+    """
+    แบ่ง Chunk -> แปลภาษา -> Save ลง DB -> Return English Chunks
+    """
     print(f"Creating chunks for Chapter {chapter.id}...")
     
     existing_chunks = session.exec(select(chunkContent).where(chunkContent.chapterId == chapter.id)).all()
@@ -362,12 +360,13 @@ async def create_and_save_chunks(session: Session, chapter: chapterContent):
 
 async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel: str):
     """ส่ง Text Chunk ไปให้ LLM Extract ข้อมูล"""
+    # Prompt: Removed Location Extraction
     prompt = f"""
     Role:
     You are an AI Visual Director.
 
     Task:
-    Extract Entity information (Character, Location, Item) from the Input Text into a valid JSON format.
+    Extract Entity information (Character, Item) from the Input Text into a valid JSON format. Do NOT extract Locations.
 
     Rules:
     1. "IdentityTags": Fixed physical traits (hair color, eye color, race, gender).
@@ -375,6 +374,8 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
     3. Use the "first appearance" for changing traits.
     4. Tags must be nouns/adjectives only. No verbs.
     5. English output only.
+    6. "gender": Identify as Male, Female, or Unknown.
+    7. Distinction: Treat 'Second Brother' and 'Second Idiot' as separate characters. Do not combine them.
 
     Output JSON Format:
     {{
@@ -382,12 +383,13 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
             {{
                 "type": "Character",
                 "name": "Name",
+                "gender": "Male",
                 "altNames": [],
                 "IdentityTags": "tag1, tag2",
                 "ModifierTags": "tag1, tag2"
             }},
             {{
-                "type": "Location",
+                "type": "Item",
                 "name": "Name",
                 "altNames": [],
                 "VisualTags": "tag1, tag2"
@@ -447,8 +449,7 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
     
     final_output = {
         "characters": [],
-        "locations": [],
-        "items": [],
+        "items": [], # Removed locations from output structure
         "status": "extracted"
     }
 
@@ -477,6 +478,11 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
         for raw in all_raw_entities:
             e_type = raw.get("type", "").strip().capitalize()
             name = raw.get("name", "").strip()
+            
+            # Skip if Location (just in case LLM hallucinates)
+            if "location" in e_type.lower():
+                continue
+            
             if not e_type or not name:
                 continue
 
@@ -510,7 +516,10 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
             # Remove tags in Modifier that are also in Identity
             m_tags = {t for t in m_tags if t.lower() not in {it.lower() for it in i_tags}}
 
+            # Prepare lowercase sets for strict comparison
+            # Normalize with split/join to handle extra spaces
             current_name_lower = " ".join(name.lower().split())
+            current_alts_lower = {" ".join(a.lower().split()) for a in current_alts}
             
             # Note: Removed gender extraction from raw since user reverted prompt
             # Will default to "Unknown" if not in prompt, or use existing if merging
@@ -527,7 +536,6 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                 # --- STRICT MERGE RULES ---
                 is_name_match = current_name_lower == existing_name_lower
                 is_new_in_old_alts = current_name_lower in existing_alts_lower
-                current_alts_lower = {" ".join(a.lower().split()) for a in current_alts}
                 is_old_in_new_alts = existing_name_lower in current_alts_lower
                 # Substring check with stricter length > 5
                 is_substring = (current_name_lower in existing_name_lower or existing_name_lower in current_name_lower) \
@@ -613,9 +621,8 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                 v_list = sorted(list(data["VisualTags"]))[:MAX_TAGS]
                 formatted_data["VisualTags"] = ", ".join(v_list)
                 
-                if "location" in e_type_lower:
-                    final_output["locations"].append(formatted_data)
-                else:
+                # removed Location
+                if "item" in e_type_lower:
                     final_output["items"].append(formatted_data)
 
         print(f"Extract Entities Time: {time.perf_counter() - start:.3f} seconds")

@@ -38,11 +38,17 @@ def log_memory():
         mem = psutil.virtual_memory()
         print(f"   📊 RAM: {mem.percent}%")
 
+def clean_prompt_text(text):
+    # ลบตัวอักษรพิเศษและวงเล็บ
+    text = re.sub(r"[\[\]\{\}\"']", "", text)
+    # ลบการขึ้นบรรทัดใหม่
+    text = text.replace("\n", " ")
+    return text.strip()
+
 # ================= OLLAMA LOGIC =================
 async def analyze_script_content(chunk_text: str, client: httpx.AsyncClient):
     """
     Phase 1: อ่านบทเพื่อดูว่า 'ใคร' อยู่ 'ที่ไหน'
-    (ยังไม่สนใจ Visual Prompt ของฉาก สนใจแค่ชื่อสถานที่)
     """
     prompt = f"""
     Role: Visual Novel Director.
@@ -67,17 +73,17 @@ async def analyze_script_content(chunk_text: str, client: httpx.AsyncClient):
 
 async def generate_location_prompt(location_name: str, context_text: str, client: httpx.AsyncClient):
     """
-    Phase 2: ถ้าสถานที่นี้ยังไม่มีรูป -> ให้ AI ออกแบบ Visual Prompt สำหรับ SDXL
+    Phase 2: ให้ AI ออกแบบ Visual Prompt (แบบสั้นและสมจริง)
     """
     prompt = f"""
     Role: Environment Artist.
-    Task: Write a Stable Diffusion prompt for a background image.
+    Task: Write keywords for a REALISTIC background image.
     Location: "{location_name}"
     Context: "{context_text}"
     
     Rules:
-    1. Output KEYWORDS only, comma separated.
-    2. Visual Novel / Anime background style.
+    1. Output KEYWORDS only, comma separated. **Max 10 keywords**.
+    2. Style: **Photorealistic, Cinematic, 8k**. NO anime style.
     3. NO CHARACTERS, NO PEOPLE. Just the scenery.
     4. Atmosphere, lighting, time of day.
     
@@ -86,10 +92,20 @@ async def generate_location_prompt(location_name: str, context_text: str, client
     try:
         print(f"   [Ollama] Designing Location: {location_name}...")
         res = await client.post(ollamaURL, json={"model": ollamaModel, "prompt": prompt, "stream": False}, timeout=300.0)
-        return res.json().get("response", "").strip()
+        raw_prompt = res.json().get("response", "").strip()
+        
+        # ✅ ตัด Prompt ให้สั้นลงเพื่อแก้ปัญหา Token เกิน
+        cleaned = clean_prompt_text(raw_prompt)
+        # เอาแค่ 20 tags แรกก็พอ
+        tags = [t.strip() for t in cleaned.split(',') if t.strip()]
+        if len(tags) > 20:
+            tags = tags[:20]
+        
+        return ", ".join(tags)
+
     except Exception as e:
         print(f"❌ Design Failed: {e}")
-        return f"anime style background, {location_name}, masterpiece, no humans"
+        return f"cinematic background, {location_name}, realistic, no humans"
 
 async def unload_ollama(client: httpx.AsyncClient):
     try:
@@ -109,7 +125,6 @@ class BGGenerator:
         
         print(f"   🚀 Loading SDXL for Background ({self.device})...")
         try:
-            # ใช้ Text-to-Image ธรรมดา (ไม่ต้อง Inpaint)
             if stabilityModel.endswith(".safetensors"):
                 self.pipe = StableDiffusionXLPipeline.from_single_file(stabilityModel, torch_dtype=self.dtype, use_safetensors=True)
             else:
@@ -122,8 +137,7 @@ class BGGenerator:
             self.pipe.enable_model_cpu_offload()
         else:
             self.pipe.to(self.device)
-            try: self.pipe.enable_vae_slicing() # ช่วย CPU
-            except: pass
+            self.pipe.enable_vae_slicing() 
 
         return self.pipe
 
@@ -134,18 +148,28 @@ class BGGenerator:
         log_memory()
         print(f"   🎨 Generating BG: {prompt[:50]}...")
         
-        style = "anime style background, visual novel background, highly detailed, 8k, masterpiece"
-        neg = "people, humans, person, text, watermark, bad quality, blurry, crowd"
+        # ✅ ปรับ Style เป็น Realistic / Cinematic
+        style = "cinematic, photorealistic, highly detailed, 8k, masterpiece, raw photo, realistic lighting, unreal engine 5 render, sharp focus"
         
+        # ✅ Negative Prompt ดักทาง Anime/Cartoon
+        neg = "anime, cartoon, illustration, drawing, painting, people, humans, person, text, watermark, bad quality, blurry, crowd, lowres, distorted"
+        
+        # รวม Prompt
+        final_prompt = f"{style}, {prompt}"
+        
+        # ตัดความยาว Prompt (Safety Check) SDXL รับได้ประมาณ 77 tokens (~300 chars)
+        # Juggernaut อาจรับได้เยอะกว่า แต่ตัดเพื่อความชัวร์
+        if len(final_prompt) > 1000:
+            final_prompt = final_prompt[:1000]
+
         image = pipe(
-            prompt=f"{style}, {prompt}",
+            prompt=final_prompt,
             negative_prompt=neg,
             height=768, width=1280, # แนวนอน 16:9
-            num_inference_steps=25,
+            num_inference_steps=30, # เพิ่ม Step นิดหน่อยให้ Juggernaut ทำงานได้เต็มที่
             guidance_scale=7.5
         ).images[0]
         
-        # Resize ให้ตรงเป๊ะกับ Canvas
         image = image.resize((IMG_WIDTH, IMG_HEIGHT), Image.Resampling.LANCZOS)
         image.save(output_path)
         return True
@@ -179,8 +203,7 @@ class VNComposer:
         count = len(valid_chars)
         # print(f"   👥 Placing {count} characters...")
 
-        # 3. คำนวณตำแหน่ง (Visual Novel Style)
-        # Scale ตัวละคร: ให้สูงประมาณ 85% ของฉาก
+        # 3. คำนวณตำแหน่ง
         char_target_h = int(IMG_HEIGHT * 0.85)
         
         positions = []
@@ -202,7 +225,7 @@ class VNComposer:
             # คำนวณ X, Y
             center_x = int(IMG_WIDTH * positions[i])
             paste_x = center_x - (new_w // 2)
-            paste_y = IMG_HEIGHT - char_target_h + 30 # ชิดขอบล่าง (เผื่อเหลื่อมนิดหน่อย)
+            paste_y = IMG_HEIGHT - char_target_h + 30 
             
             # Paste with Alpha
             bg.alpha_composite(char_img, dest=(paste_x, paste_y))
