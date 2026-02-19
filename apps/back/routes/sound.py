@@ -4,7 +4,8 @@ import time
 import requests
 import re
 import numpy as np
-import gc  # เพิ่ม gc เพื่อจัดการ memory
+import gc 
+import torch
 from typing import List, Dict, Optional, Any, Set
 from io import BytesIO
 
@@ -64,7 +65,6 @@ def load_specific_models(needed_keys: Set[str]) -> tuple:
     # Lazy Import
     try:
         from transformers import VitsModel, AutoTokenizer
-        import torch
     except ImportError:
         print("[Error] transformers or torch not installed.", flush=True)
         return {}, {}
@@ -107,7 +107,6 @@ def generate_tts_with_loaded_models(
     if TTS_MODE == "API":
         return _generate_via_api(text, mapped_key)
     else:
-        # ส่ง models, tokenizers เข้าไป
         return _generate_via_local(text, mapped_key, models, tokenizers)
 
 def _generate_via_api(text: str, model_key: str) -> Optional[AudioSegment]:
@@ -124,14 +123,6 @@ def _generate_via_api(text: str, model_key: str) -> Optional[AudioSegment]:
         return None
 
 def _generate_via_local(text: str, model_key: str, models: Dict, tokenizers: Dict) -> Optional[AudioSegment]:
-    """
-    สร้างเสียงจากโมเดลที่โหลดมาแล้ว
-    """
-    try:
-        import torch
-    except ImportError:
-        return None
-
     if model_key not in models:
         print(f"   [!] Model '{model_key}' was not loaded for this batch.", flush=True)
         return None
@@ -384,7 +375,7 @@ def get_chunks_analysis(
     # SAVE FILE & FINISH
     # ---------------------------------------------------------
     if len(combined_audio) > 0:
-        output_dir = os.path.abspath("output_audio")
+        output_dir = os.path.abspath("public/storage/sound")
         os.makedirs(output_dir, exist_ok=True)
         output_filename = f"{chapter_id}.mp3"
         output_file_path = os.path.join(output_dir, output_filename)
