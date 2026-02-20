@@ -121,6 +121,13 @@ export default function ChapterReaderPage({
       );
       const data3 = await response3.json();
       console.log("done generateImages ", data3);
+
+      await delay(3000);
+      const response4 = await fetch(
+        `http://127.0.0.1:8000/matcher/${chapterId}`,
+      );
+      const data4 = await response4.json();
+      console.log("done matcher ", data4);
     } catch (error) {
       console.error("err API:", error);
     }
