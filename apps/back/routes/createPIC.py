@@ -2,10 +2,12 @@ import asyncio
 import time
 import os
 import difflib 
+import shutil
 from typing import List, Dict, Any, Optional
+from PIL import Image
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select, create_engine, SQLModel 
+from sqlmodel import Session, select, create_engine, SQLModel, Field
 import httpx
 from dotenv import load_dotenv 
 
@@ -45,57 +47,44 @@ try:
 except ImportError:
     print("Error: models.py not found.")
 
-load_dotenv()
-postgres_user = os.getenv("POSTGRES_USER")
-postgres_password = os.getenv("POSTGRES_PASSWORD")
-postgres_server = os.getenv("POSTGRES_SERVER", "localhost")
-postgres_port = os.getenv("POSTGRES_PORT", "5432")
-postgres_db = os.getenv("POSTGRES_DB")
+# อัปเดต Model Matcher 
+class matcher(SQLModel, table=True):
+    __table_args__ = {'extend_existing': True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+    character: str
+    location: str
+    duration: float
+    chunkContentId: Optional[int] = Field(default=None, foreign_key="chunkcontent.id")
+    chapterId: Optional[int] = Field(default=None, foreign_key="chaptercontent.id")
 
-pg_url = f"postgresql://{postgres_user}:{postgres_password}@{postgres_server}:{postgres_port}/{postgres_db}"
-engine = create_engine(pg_url)
-
-def get_session():
-    with Session(engine) as session:
-        yield session
+# ดึง get_session มาจากไฟล์ database 
+try:
+    from database import get_session
+except ImportError:
+    from ..database import get_session
 
 router = APIRouter(prefix="/createPic", tags=["createPic"])
 
-# ✅ ปรับ Path ตามที่ขอ
 OUTPUT_DIR = "public/storage/pic/"
 CHAR_DIR = "public/storage/characters/"
-ENTITIES_DIR = "public/storage/entities/" # เก็บรูปสถานที่ตาม ID
+ENTITIES_DIR = "public/storage/entities/"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(ENTITIES_DIR, exist_ok=True)
 
 # ==========================================
-# 2. PATH HELPERS
+# 2. HELPERS
 # ==========================================
 
 def resolve_file_path(db_path: str) -> Optional[str]:
-    """
-    แปลง Path จาก DB (storage/...) ให้เป็น System Path ที่ Python อ่านได้ (public/storage/...)
-    """
     if not db_path: return None
-    
-    # 1. เช็ค Path ตรงๆ
     if os.path.exists(db_path): return db_path
-    
-    # 2. ถ้าไม่มี public/ ให้ลองเติมดู
     if not db_path.startswith("public/"):
         public_path = os.path.join("public", db_path)
         if os.path.exists(public_path): return public_path
-        
     return None
-
-# ==========================================
-# 3. SMART DB HELPERS (Fuzzy Logic)
-# ==========================================
 
 def find_smart_location(session: Session, movie_id: int, loc_name: str) -> Optional[entity]:
     if not loc_name: return None
-    
-    # 1. Exact Match
     exact_loc = session.exec(select(entity).where(
         entity.movieId == movie_id, 
         entity.type == "Location",
@@ -103,35 +92,17 @@ def find_smart_location(session: Session, movie_id: int, loc_name: str) -> Optio
     )).first()
     if exact_loc: return exact_loc
 
-    # 2. Fuzzy Match
-    all_locs = session.exec(select(entity).where(
-        entity.movieId == movie_id,
-        entity.type == "Location"
-    )).all()
-    
+    all_locs = session.exec(select(entity).where(entity.movieId == movie_id, entity.type == "Location")).all()
     loc_map = {l.name.lower(): l for l in all_locs}
     matches = difflib.get_close_matches(loc_name.lower(), loc_map.keys(), n=1, cutoff=0.7)
-    
-    if matches:
-        matched_name = matches[0]
-        print(f"      💡 Fuzzy Matched: '{loc_name}' -> '{matched_name}'")
-        return loc_map[matched_name]
-        
-    return None
+    return loc_map[matches[0]] if matches else None
 
 def find_character_path(session: Session, movie_id: int, char_name: str):
     if not char_name: return None
     def check(p): return p if p and os.path.exists(p) else None
-    
-    char = session.exec(select(character).where(
-        character.movieId == movie_id, character.name.ilike(f"%{char_name}%")
-    )).first()
-    
+    char = session.exec(select(character).where(character.movieId == movie_id, character.name.ilike(f"%{char_name}%"))).first()
     if not char:
-        char = session.exec(select(character).join(altCharacter).where(
-            character.movieId == movie_id, altCharacter.altName.ilike(f"%{char_name}%")
-        )).first()
-
+        char = session.exec(select(character).join(altCharacter).where(character.movieId == movie_id, altCharacter.altName.ilike(f"%{char_name}%"))).first()
     if char:
         if p := check(char.refpath): return p
         if p := check(os.path.join(CHAR_DIR, f"{char.id}.png")): return p
@@ -139,7 +110,7 @@ def find_character_path(session: Session, movie_id: int, char_name: str):
     return None
 
 # ==========================================
-# 4. MAIN BATCH PROCESS
+# 3. MAIN PROCESS
 # ==========================================
 
 @router.get("/generate-images/{chapter_id}")
@@ -147,138 +118,183 @@ async def generate_images_for_chapter(
     chapter_id: int, 
     session: Session = Depends(get_session)
 ):
-    chunks = session.exec(select(chunkContent).where(chunkContent.chapterId == chapter_id)).all()
+    # ดึง Chunk ทั้งหมด เรียงลำดับตาม chunkNumber 
+    all_chunks = session.exec(select(chunkContent).where(chunkContent.chapterId == chapter_id).order_by(chunkContent.chunkNumber)).all()
     chapter_info = session.get(chapterContent, chapter_id)
-    
-    if not chunks or not chapter_info:
+    if not all_chunks or not chapter_info:
         return {"status": "error", "message": "No data found."}
-    
+
     movie_id = chapter_info.movieId
     tasks_to_do = [] 
-    missing_locations = {} # {loc_name: {prompt, db_entity}}
+    missing_locations = {}
 
-    print("🔵 [PHASE 1] Script Analysis (Ollama)...")
+    # --- PHASE 1: Analysis ---
+    print("🔵 [PHASE 1] Script Analysis & Checking Requirements...")
     async with httpx.AsyncClient(timeout=120.0) as client:
-        for chunk in chunks:
-            if chunk.picRef: 
-                print(f"   Skipping Chunk {chunk.chunkNumber} (Exists)")
-                continue
+        for chunk in all_chunks:
+            # 1. เช็คว่ามีรูปภาพหลัก (picRef) ครบหรือยัง
+            needs_final_pic = not bool(chunk.picRef)
             
+            # 2. เช็คว่าข้อมูลใน Matcher ครบหรือยัง
+            current_match = session.exec(select(matcher).where(matcher.chunkContentId == chunk.id)).first()
+            needs_matcher = False
+            
+            if not current_match:
+                needs_matcher = True
+            else:
+                # ถ้ามี record แล้ว แต่ช่อง character หรือ location ว่างเปล่า
+                if not current_match.character or not current_match.location:
+                    needs_matcher = True
+                    
+            # ถ้ามีรูปครบหมดแล้ว ทั้งรูปหลักและข้อมูลใน matcher ก็ข้ามไปเลย
+            if not needs_final_pic and not needs_matcher:
+                print(f"   Skipping Chunk {chunk.chunkNumber} (All assets exist)")
+                continue
+                
+            print(f"   Analyzing Chunk {chunk.chunkNumber}... (Needs Pic: {needs_final_pic}, Needs Matcher: {needs_matcher})")
+
             text_input = chunk.chunkDetailEng if chunk.chunkDetailEng else chunk.chunkDetail
             if not text_input: continue
 
-            # 1. Analyze Script
             meta = await analyze_script_content(text_input, client)
             if not meta: continue
             
             loc_name = meta.get('location_name', 'Unknown Location')
-            chars = meta.get('characters', [])
             
+            # เก็บข้อมูลว่า Chunk นี้ต้องทำอะไรบ้าง
             tasks_to_do.append({
                 "chunk_obj": chunk,
                 "location_name": loc_name,
-                "characters": chars,
-                "text_context": text_input
+                "characters": meta.get('characters', []),
+                "text_context": text_input,
+                "needs_final_pic": needs_final_pic,
+                "needs_matcher": needs_matcher,
+                "matcher_record": current_match # เก็บ record เดิมไปใช้ต่อได้เลย จะได้ไม่ต้อง query ซ้ำ
             })
 
-            # 2. Check Location in DB
             loc_entity = find_smart_location(session, movie_id, loc_name)
-            
-            # เช็คว่ามีไฟล์จริงไหม (ใช้ resolve_file_path ช่วยเช็ค)
             real_path = resolve_file_path(loc_entity.refpath) if loc_entity else None
-            has_file = real_path is not None
             
-            if not has_file and loc_name not in missing_locations:
-                print(f"   ❓ Missing BG for: '{loc_name}'")
-                
+            if not real_path and loc_name not in missing_locations:
                 bg_prompt = await generate_location_prompt(loc_name, text_input, client)
-                missing_locations[loc_name] = {
-                    "prompt": bg_prompt,
-                    "db_entity": loc_entity, # ส่ง Entity เดิมไปถ้ามี
-                    "refpath": None
-                }
+                missing_locations[loc_name] = {"prompt": bg_prompt, "db_entity": loc_entity}
 
-        # จบ Phase 1: ปิด Ollama
-        print("🟡 [TRANSITION] Unloading Ollama...")
         await unload_ollama(client)
         flush_memory()
 
-        # Phase 2: Generate Missing Backgrounds
+        # --- PHASE 2: Generate BG ---
         if missing_locations:
             print(f"🟢 [PHASE 2] Generating {len(missing_locations)} Backgrounds...")
             bg_gen = BGGenerator()
-            
             for loc_name, data in missing_locations.items():
-                
-                # 1. เตรียม Entity & ID เพื่อตั้งชื่อไฟล์
                 loc_entity = data['db_entity']
                 if not loc_entity:
-                    print(f"      💾 Creating New DB Location: {loc_name}")
-                    loc_entity = entity(
-                        type="Location",
-                        name=loc_name,
-                        visual_tags=data['prompt'],
-                        movieId=movie_id,
-                        refpath="" # ใส่ว่างไว้ก่อน
-                    )
+                    loc_entity = entity(type="Location", name=loc_name, visual_tags=data['prompt'], movieId=movie_id, refpath="")
                     session.add(loc_entity)
                     session.commit()
-                    session.refresh(loc_entity) # ✅ ได้ ID มาแล้ว
-                    data['db_entity'] = loc_entity
-                
-                # 2. ตั้งชื่อไฟล์ตาม ID
-                entity_id = loc_entity.id
-                filename = f"{entity_id}.png"
-                fs_path = os.path.join(ENTITIES_DIR, filename)       # path จริงในเครื่อง
-                db_refpath = f"storage/entities/{filename}"          # path ที่เก็บใน DB
-                
-                # 3. Generate Image
-                success = await asyncio.to_thread(bg_gen.generate_bg, data['prompt'], fs_path)
-                
-                if success:
-                    data['refpath'] = fs_path # เก็บ Path จริงไว้ใช้ใน Phase 3
-                    
-                    # 4. Update DB
-                    print(f"      💾 Updating DB Refpath: {db_refpath}")
-                    loc_entity.refpath = db_refpath
+                    session.refresh(loc_entity)
+
+                fs_path = os.path.join(ENTITIES_DIR, f"{loc_entity.id}.png")
+                if await asyncio.to_thread(bg_gen.generate_bg, data['prompt'], fs_path):
+                    loc_entity.refpath = f"storage/entities/{loc_entity.id}.png"
                     session.add(loc_entity)
-                    session.commit()
-            
+            session.commit()
             del bg_gen
             flush_memory()
 
-        # Phase 3: Composition
-        print("🟣 [PHASE 3] Compositing Scenes...")
+        # --- PHASE 3: Prepare Matcher Images & Update Matcher ---
+        print("🟠 [PHASE 3] Preparing Matcher Images & Update...")
+        
+        for task in tasks_to_do:
+            if not task['needs_matcher']:
+                continue # ถ้า Matcher ของ Chunk นี้ครบแล้ว ไม่ต้องทำส่วนนี้
+                
+            chunk = task['chunk_obj']
+            loc_name = task['location_name']
+            chars = task['characters']
+            current_match = task['matcher_record']
+
+            if not current_match:
+                # ถ้ายังไม่มี ให้สร้างใหม่
+                current_match = matcher(
+                    chapterId=chapter_id,
+                    chunkContentId=chunk.id,
+                    character="",
+                    location="",
+                    duration=0.0
+                )
+                session.add(current_match)
+                session.commit()
+                session.refresh(current_match)
+                
+            # ตั้งชื่อไฟล์แบบเจาะจง Chunk จะได้ไม่ทับกัน
+            loca_filename = f"{chapter_id}_{chunk.chunkNumber}_loca.png"
+            cha_filename = f"{chapter_id}_{chunk.chunkNumber}_cha.png"
+            
+            # 1. สร้าง Loca.png 
+            loc_entity = find_smart_location(session, movie_id, loc_name)
+            bg_path = resolve_file_path(loc_entity.refpath) if loc_entity else None
+            loca_filepath = os.path.join(OUTPUT_DIR, loca_filename)
+            
+            if bg_path and os.path.exists(bg_path):
+                shutil.copy(bg_path, loca_filepath)
+            else:
+                Image.new("RGB", (1024, 1024), (0, 0, 0)).save(loca_filepath)
+                
+            # 2. สร้าง Cha.png (ทำพื้นหลังใส)
+            cha_filepath = os.path.join(OUTPUT_DIR, cha_filename)
+            char_paths = []
+            for char_name in chars:
+                cp = find_character_path(session, movie_id, char_name)
+                if cp: char_paths.append(cp)
+                
+            base_img = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0)) 
+            if char_paths:
+                num_chars = len(char_paths)
+                for i, cp in enumerate(char_paths):
+                    try:
+                        c_img = Image.open(cp).convert("RGBA")
+                        target_h = int(1024 * 0.8) 
+                        target_w = int(c_img.width * (target_h / c_img.height))
+                        c_img = c_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                        
+                        x_offset = (1024 // (num_chars + 1)) * (i + 1) - (target_w // 2)
+                        y_offset = 1024 - target_h
+                        
+                        base_img.paste(c_img, (x_offset, y_offset), c_img)
+                    except Exception as e:
+                        print(f"      ⚠️ Error composing character for matcher: {e}")
+                        
+            base_img.save(cha_filepath)
+            
+            # 3. อัปเดตตาราง Matcher กลับลงไป
+            current_match.location = loca_filename
+            current_match.character = cha_filename
+            session.add(current_match)
+            print(f"      ✅ Matcher Chunk {chunk.chunkNumber} updated: {loca_filename}, {cha_filename}")
+
+        session.commit()
+
+        # --- PHASE 4: Final Composition ---
+        print("🟣 [PHASE 4] Final Composition...")
         composer = VNComposer()
         success_count = 0
 
         for task in tasks_to_do:
-            loc_name = task['location_name']
-            
-            bg_path = None
-            
-            # 1. เช็คจากคิวที่เพิ่งเจน (Path จริง)
-            if loc_name in missing_locations and missing_locations[loc_name]['refpath']:
-                bg_path = missing_locations[loc_name]['refpath']
-            
-            # 2. ถ้าไม่มี ให้หาจาก DB แล้วแปลงเป็น Path จริง
-            if not bg_path:
-                loc_entity = find_smart_location(session, movie_id, loc_name)
-                if loc_entity:
-                    bg_path = resolve_file_path(loc_entity.refpath)
+            if not task['needs_final_pic']:
+                continue # ถ้ารูปหลักเสร็จแล้ว ข้ามไป
+                
+            loc_entity = find_smart_location(session, movie_id, task['location_name'])
+            bg_path = resolve_file_path(loc_entity.refpath) if loc_entity else None
 
-            # หา Character Paths
             char_paths = []
             for char_name in task['characters']:
                 cp = find_character_path(session, movie_id, char_name)
                 if cp: char_paths.append(cp)
             
-            # Final Output Path
             chunk = task['chunk_obj']
-            final_filename = f"ch{chapter_id}_chunk{chunk.chunkNumber}_{int(time.time())}.png"
-            final_path = os.path.join(OUTPUT_DIR, final_filename)
+            final_path = os.path.join(OUTPUT_DIR, f"ch{chapter_id}_chunk{chunk.chunkNumber}_{int(time.time())}.png")
 
-            # Compose
             if await asyncio.to_thread(composer.compose, bg_path, char_paths, final_path):
                 chunk.picRef = final_path
                 session.add(chunk)
@@ -288,6 +304,6 @@ async def generate_images_for_chapter(
 
     return {
         "status": "completed",
-        "generated": success_count,
-        "bg_created": len(missing_locations)
+        "generated_final_pics": success_count,
+        "processed_tasks": len(tasks_to_do)
     }

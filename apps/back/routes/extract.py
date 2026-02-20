@@ -33,7 +33,7 @@ stabilityModel = "stabilityai/stable-diffusion-xl-base-1.0"
 GENERATE_ENTITY_IMAGES = True # Set to False to skip generating images for Items/Entities
 
 # Limits
-MAX_TAGS = 20 
+MAX_TAGS = 12 
 
 # Blocklist: คำทั่วไปที่ไม่ควรเป็นชื่อตัวละคร
 GENERIC_NAMES = {

@@ -32,7 +32,7 @@ class chunkContent(SQLModel, table=True):
     chunkNumber: int 
     chunkDetail: str = Field(default="")      # Chunk thai (ไม่มี overlap)
     chunkDetailEng: str = Field(default="")   # Chunk eng (มี overlap)
-    analyzed: str = Field(default="") 
+    analyzed: str = Field(default="")          # unuse!!!
     picRef: str = Field(default="")
     chapterId: Optional[int] = Field(default=None, foreign_key="chaptercontent.id")
     
@@ -75,15 +75,16 @@ class altCharacter(SQLModel, table=True):
     
     character: Optional["character"] = Relationship(back_populates="altNames")
     
-class user(SQLModel, table=True):
+class users(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     role: str = Field(default="user")
-    emailL: str
+    email: str
     password: str 
     
 class matcher(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     character: str
     location: str
-    duration: str
+    duration: float
+    chunkContentId: Optional[int] = Field(default=None, foreign_key="chunkcontent.id")
     chapterId: Optional[int] = Field(default=None, foreign_key="chaptercontent.id")

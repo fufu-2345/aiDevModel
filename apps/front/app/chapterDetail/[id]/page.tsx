@@ -73,6 +73,9 @@ export default function ChapterReaderPage({
   const chapterId = resolvedParams.id;
   const router = useRouter();
 
+  const delay = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
   useEffect(() => {
     if (!chapterId) return;
     const fetchChapter = async () => {
@@ -105,35 +108,43 @@ export default function ChapterReaderPage({
       const data1 = await response1.json();
       console.log("done extract/ ", data1);
 
+      await delay(3000);
       const response2 = await fetch(
-        `http://127.0.0.1:8000/createPic/generate-images/${chapterId}`,
+        `http://127.0.0.1:8000/sound/${chapterId}/analysis`,
       );
       const data2 = await response2.json();
-      console.log("done generateImages ", data2);
+      console.log("done sound/ ", data2);
+
+      await delay(3000);
+      const response3 = await fetch(
+        `http://127.0.0.1:8000/createPic/generate-images/${chapterId}`,
+      );
+      const data3 = await response3.json();
+      console.log("done generateImages ", data3);
     } catch (error) {
       console.error("err API:", error);
     }
   };
 
-  const genPic = async () => {
-    try {
-      const response = await fetch(
-        `http://127.0.0.1:8000/genPic/${chapterId}`,
-        {
-          method: "GET",
-        },
-      );
-      console.log(response, "aaaaa");
-      if (response.ok) {
-        toast.success("Image generation started!");
-      } else {
-        toast.error("Failed to start image generation.");
-      }
-    } catch (error) {
-      console.error("Error:", error);
-      toast.error("An error occurred while starting image generation.");
-    }
-  };
+  // const genPic = async () => {
+  //   try {
+  //     const response = await fetch(
+  //       `http://127.0.0.1:8000/genPic/${chapterId}`,
+  //       {
+  //         method: "GET",
+  //       },
+  //     );
+  //     console.log(response, "aaaaa");
+  //     if (response.ok) {
+  //       toast.success("Image generation started!");
+  //     } else {
+  //       toast.error("Failed to start image generation.");
+  //     }
+  //   } catch (error) {
+  //     console.error("Error:", error);
+  //     toast.error("An error occurred while starting image generation.");
+  //   }
+  // };
 
   const handleSave = async () => {
     if (!chapterId) return;

@@ -82,7 +82,7 @@ async def generate_location_prompt(location_name: str, context_text: str, client
     Context: "{context_text}"
     
     Rules:
-    1. Output KEYWORDS only, comma separated. **Max 10 keywords**.
+    1. Output KEYWORDS only, comma separated. **Max 15 keywords**.
     2. Style: **Photorealistic, Cinematic, 8k**. NO anime style.
     3. NO CHARACTERS, NO PEOPLE. Just the scenery.
     4. Atmosphere, lighting, time of day.

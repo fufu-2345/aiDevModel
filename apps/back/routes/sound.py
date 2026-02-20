@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 from pydub import AudioSegment
 
 from database import get_session
-from models import chunkContent
+from models import chunkContent, matcher
 
 router = APIRouter(
     prefix="/sound",
@@ -393,7 +393,39 @@ def get_chunks_analysis(
     else:
         analysis_result["audio_status"] = "no_audio_generated"
 
-    # [TIMER END]
+    print(f"[Database] Inserting duration data to matcher table...", flush=True)
+    
+    # [NEW] สร้าง Dictionary Map ระหว่าง chunkNumber กับ id ของ chunkContent
+    chunk_id_map = {str(c.chunkNumber): c.id for c in chunks}
+    print(f"[Debug] chunk_id_map: {chunk_id_map}", flush=True)
+
+    try:
+        for chunk_num_str, data in analysis_result.items():
+            # ข้าม Key ที่ไม่ใช่ข้อมูล chunk (ต้องครอบคลุมทุก status keys ที่เราเพิ่มเข้าไป)
+            if chunk_num_str in ["audio_status", "audio_file_path", "total_processing_time_seconds"]: 
+                continue
+            
+            # ตรวจสอบอีกชั้นเพื่อให้แน่ใจว่า data เป็น dict จริงๆ ก่อนเข้าถึง ["duration"]
+            if isinstance(data, dict) and "duration" in data:
+                # ดึง id จาก Map ที่สร้างไว้
+                chunk_id = chunk_id_map.get(chunk_num_str)
+                print(f"   [DB] Chunk {chunk_num_str}: {data['duration']}s | mapped chunkContentId: {chunk_id}", flush=True)
+                
+                new_matcher = matcher(
+                    character="",
+                    location="",
+                    duration=float(data["duration"]),
+                    chunkContentId=chunk_id,  # Map ข้อมูล chunkContentId
+                    chapterId=chapter_id
+                )
+                session.add(new_matcher)
+        
+        session.commit()
+        print(f"[Database] Matcher records inserted successfully.", flush=True)
+    except Exception as e:
+        session.rollback()
+        print(f"[Database Error] Failed to insert matcher: {e}", flush=True)
+        
     end_time = time.time()
     total_duration = end_time - start_time
     print(f"--------------------------------------------------", flush=True)

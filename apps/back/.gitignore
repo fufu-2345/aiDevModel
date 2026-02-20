@@ -4,5 +4,6 @@ __pycache__
 public/storage/characters/*
 public/storage/entities/*
 public/storage/pic/*
+public/storage/sound/*
 ipAdapter/*
 output_audio/*
