@@ -97,6 +97,23 @@ const TrashIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const LogoutIcon = ({ className }: { className?: string }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+    <polyline points="16 17 21 12 16 7" />
+    <line x1="21" y1="12" x2="9" y2="12" />
+  </svg>
+);
+
 interface Movie {
   id: number;
   movieTitle: string;
@@ -169,6 +186,27 @@ export default function MovieDashboard() {
     fetchMoviePics();
     setUserRole(localStorage.getItem("user_role"));
   }, []);
+
+  const handleLogout = async () => {
+    const result = await Swal.fire({
+      title: "Logout?",
+      text: "Are you sure you want to logout?",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#d33",
+      cancelButtonColor: "#9ca3af",
+      confirmButtonText: "Yes, logout!",
+      cancelButtonText: "Cancel",
+    });
+
+    if (result.isConfirmed) {
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("user_role");
+      localStorage.removeItem("user_email");
+
+      window.location.href = "/";
+    }
+  };
 
   const handleDelete = async (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
@@ -243,19 +281,30 @@ export default function MovieDashboard() {
             Archive
           </h1>
           <button
-            onClick={() => setIsEditMode(!isEditMode)}
-            className="w-[10%] py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 text-white font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
+            onClick={handleLogout}
+            className="ml-auto mr-5 px-4 py-2.5 rounded-full bg-white/50 hover:bg-red-700 text-red-700 hover:text-white border border-red-200 hover:border-transparent font-medium shadow-sm transition-all duration-300 flex items-center gap-2 backdrop-blur-sm group"
           >
-            {isEditMode ? (
-              <>
-                <CheckIcon className="w-5 h-5" /> Done
-              </>
-            ) : (
-              <>
-                <EditIcon className="w-5 h-5" /> Edit
-              </>
-            )}
+            <LogoutIcon className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
+            <span>Logout</span>
           </button>
+          {userRole === "admin" && (
+            <button
+              onClick={() => setIsEditMode(!isEditMode)}
+              className="w-[10%] py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 text-white font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
+            >
+              <>
+                {isEditMode ? (
+                  <>
+                    <CheckIcon className="w-5 h-5" /> Done
+                  </>
+                ) : (
+                  <>
+                    <EditIcon className="w-5 h-5" /> Edit
+                  </>
+                )}
+              </>
+            </button>
+          )}
         </div>
         <div className="bg-white/10 backdrop-blur-md p-8 rounded-2xl shadow-sm border border-gray-100 w-[110%] relative left-1/2 -translate-x-1/2">
           <div className="relative w-full max-w-xl mb-6">

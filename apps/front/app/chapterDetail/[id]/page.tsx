@@ -3,6 +3,7 @@
 import { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
 import toast, { Toaster } from "react-hot-toast";
+import Swal from "sweetalert2";
 
 const ArrowLeftIcon = ({ className }: { className?: string }) => (
   <svg
@@ -51,6 +52,23 @@ const SaveIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const LogoutIcon = ({ className }: { className?: string }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+    <polyline points="16 17 21 12 16 7" />
+    <line x1="21" y1="12" x2="9" y2="12" />
+  </svg>
+);
+
 interface Chapter {
   id: number;
   episodeNumber: number;
@@ -71,6 +89,7 @@ export default function ChapterReaderPage({
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
+  const [userRole, setUserRole] = useState<string | null>("");
   const resolvedParams = use(params);
   const chapterId = resolvedParams.id;
   const router = useRouter();
@@ -100,10 +119,10 @@ export default function ChapterReaderPage({
             const data = await response.json();
 
             const formattedChunks = Object.entries(data)
-              .map(([key, value]) => ({
+              .map(([key, value]: [string, any]) => ({
                 id: parseInt(key, 10),
-                text: value.text,
-                picRef: value.picRef,
+                text: (value as any).text,
+                picRef: (value as any).picRef,
               }))
               .sort((a, b) => a.id - b.id);
 
@@ -155,6 +174,23 @@ export default function ChapterReaderPage({
       console.log("done matcher ", data4);
     } catch (error) {
       console.error("err API:", error);
+    }
+  };
+
+  const handleLogout = async () => {
+    const result = await Swal.fire({
+      title: "Logout?",
+      text: "Are you sure you want to logout?",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#d33",
+      cancelButtonColor: "#9ca3af",
+      confirmButtonText: "Yes, logout!",
+      cancelButtonText: "Cancel",
+    });
+
+    if (result.isConfirmed) {
+      router.push("/");
     }
   };
 
@@ -251,6 +287,13 @@ export default function ChapterReaderPage({
               </div>
             </div>
             <div className="flex gap-2 ml-4">
+              <button
+                onClick={handleLogout}
+                className="ml-auto  px-4 py-2.5 rounded-full bg-white/50 hover:bg-red-700 text-red-700 hover:text-white border border-red-200 hover:border-transparent font-medium shadow-sm transition-all duration-300 flex items-center gap-2 backdrop-blur-sm group"
+              >
+                <LogoutIcon className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
+                <span>Logout</span>
+              </button>
               <button
                 onClick={() => extractGen()}
                 className=" py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"

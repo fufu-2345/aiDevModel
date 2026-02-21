@@ -123,10 +123,6 @@ async def translate_text(text: str, retries=3) -> str:
             await asyncio.sleep(1) # พักแป๊บนึงแล้วลองใหม่
     return text # ถ้าแปลไม่ได้จริงๆ ให้คืนค่าเดิมกลับไปกัน error
 
-# ==========================================
-# 4. API ENDPOINT
-# ==========================================
-
 # createchunks
 @app.get("/create-chunks/{chapter_id}")
 async def create_chunks_for_chapter(

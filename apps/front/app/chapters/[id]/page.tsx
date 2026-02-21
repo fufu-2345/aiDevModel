@@ -3,6 +3,7 @@
 import { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
 import toast, { Toaster } from "react-hot-toast";
+import Swal from "sweetalert2";
 
 const ArrowLeftIcon = ({ className }: { className?: string }) => (
   <svg
@@ -50,6 +51,23 @@ const PlayIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const LogoutIcon = ({ className }: { className?: string }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+    <polyline points="16 17 21 12 16 7" />
+    <line x1="21" y1="12" x2="9" y2="12" />
+  </svg>
+);
+
 interface Movie {
   id: number;
   movieTitle: string;
@@ -78,6 +96,7 @@ export default function ChapterListPage({
     moviePic: string | null;
     chapters: Record<string, string>;
   }>({ moviePic: null, chapters: {} });
+  const [userRole, setUserRole] = useState<string | null>("");
   const resolvedParams = use(params);
   const movieId = resolvedParams.id;
   const router = useRouter();
@@ -109,6 +128,23 @@ export default function ChapterListPage({
       toast.error("Failed to load data");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    const result = await Swal.fire({
+      title: "Logout?",
+      text: "Are you sure you want to logout?",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#d33",
+      cancelButtonColor: "#9ca3af",
+      confirmButtonText: "Yes, logout!",
+      cancelButtonText: "Cancel",
+    });
+
+    if (result.isConfirmed) {
+      router.push("/");
     }
   };
 
@@ -172,12 +208,23 @@ export default function ChapterListPage({
 
       <div className="max-w-6xl mx-auto relative z-10">
         <div className="mb-8">
-          <button
-            onClick={() => router.push("/archive")}
-            className="flex items-center gap-2 text-white transition font-medium mb-4"
-          >
-            <ArrowLeftIcon className="w-5 h-5" /> Back to Archive
-          </button>
+          {/* เอา 2 ปุ่มมาไว้ในบรรทัดเดียวกัน */}
+          <div className="flex justify-between items-center mb-4">
+            <button
+              onClick={() => router.push("/archive")}
+              className="flex items-center gap-2 text-white transition font-medium"
+            >
+              <ArrowLeftIcon className="w-5 h-5" /> Back to Archive
+            </button>
+
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2.5 rounded-full bg-white/50 hover:bg-red-700 text-red-700 hover:text-white border border-red-200 hover:border-transparent font-medium shadow-sm transition-all duration-300 flex items-center gap-2 backdrop-blur-sm group"
+            >
+              <LogoutIcon className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
+              <span>Logout</span>
+            </button>
+          </div>
 
           <div className="bg-white/10 backdrop-blur-md p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-8 items-start">
             <div className="w-80 h-60 bg-gray-200 rounded-xl overflow-hidden shadow-md flex-shrink-0">
