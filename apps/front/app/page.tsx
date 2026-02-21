@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter } from "next/navigation";
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -13,8 +12,6 @@ export default function AuthPage() {
     confirmPassword: "",
   });
 
-  const router = useRouter();
-
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
@@ -25,40 +22,111 @@ export default function AuthPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    router.push("/archive");
-    // setIsLoading(true);
+    setIsLoading(true);
 
-    // if (!isLogin && formData.password !== formData.confirmPassword) {
-    //   alert("Passwords do not match!");
-    //   setIsLoading(false);
-    //   return;
-    // }
+    if (isLogin) {
+      // -----------------------------
+      // 1. ระบบ Login (เข้าสู่ระบบ)
+      // -----------------------------
+      try {
+        const response = await fetch("http://127.0.0.1:8000/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: formData.email,
+            password: formData.password,
+          }),
+        });
 
-    // try {
-    //   const response = await fetch("/api/auth", {
-    //     method: "POST",
-    //     headers: { "Content-Type": "application/json" },
-    //     body: JSON.stringify({
-    //       action: isLogin ? "login" : "signup",
-    //       ...formData,
-    //     }),
-    //   });
+        const data = await response.json();
 
-    //   const data = await response.json();
+        if (response.ok) {
+          // เก็บ Token ใน LocalStorage
+          localStorage.setItem("access_token", data.access_token);
+          // ย้ายไปหน้า Archive
+          window.location.href = "/archive";
+        } else {
+          alert(data.detail || "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง");
+        }
+      } catch (error) {
+        console.error("Error:", error);
+        alert("ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้");
+      } finally {
+        setIsLoading(false);
+      }
+    } else {
+      // -----------------------------
+      // 2. ระบบ Sign Up (สมัครสมาชิก + OTP)
+      // -----------------------------
+      if (formData.password !== formData.confirmPassword) {
+        alert("รหัสผ่านทั้งสองช่องไม่ตรงกัน!");
+        setIsLoading(false);
+        return;
+      }
 
-    //   if (data.success) {
-    //     alert(data.message);
-    //   } else {
-    //     alert(data.message || "Something went wrong");
-    //   }
-    // } catch (error) {
-    //   console.error("Error:", error);
-    //   alert(
-    //     `[Demo Mode] Request Sent:\nAction: ${isLogin ? "Login" : "Sign Up"}\nEmail: ${formData.email}\nPassword: ${formData.password}`,
-    //   );
-    // } finally {
-    //   setIsLoading(false);
-    // }
+      try {
+        // Step 2.1: ยิง API ไปขอ OTP ก่อน
+        const otpResponse = await fetch(
+          "http://127.0.0.1:8000/auth/request-otp",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: formData.email }),
+          },
+        );
+
+        const otpData = await otpResponse.json();
+
+        if (!otpResponse.ok) {
+          alert(otpData.detail || "ไม่สามารถขอ OTP ได้");
+          setIsLoading(false);
+          return;
+        }
+
+        // Step 2.2: ใช้ window.prompt รับ OTP (เพราะเราจะไม่แก้ UI หน้าเว็บ)
+        // หน่วงเวลาเล็กน้อยเพื่อให้เบราว์เซอร์จัดการ state ได้นุ่มนวลขึ้น
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const userEnteredOtp = window.prompt(
+          `ระบบได้ส่ง OTP ไปที่ ${formData.email} แล้ว\nกรุณากรอกรหัส OTP 6 หลัก เพื่อยืนยันการสมัคร:`,
+        );
+
+        if (!userEnteredOtp) {
+          alert("ยกเลิกการสมัคร (ไม่ได้กรอก OTP)");
+          setIsLoading(false);
+          return;
+        }
+
+        // Step 2.3: ส่งข้อมูลทั้งหมด (Email, Password, OTP) ไปสมัครสมาชิก
+        const registerResponse = await fetch(
+          "http://127.0.0.1:8000/auth/register",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: formData.email,
+              password: formData.password,
+              otp: userEnteredOtp,
+            }),
+          },
+        );
+
+        const registerData = await registerResponse.json();
+
+        if (registerResponse.ok) {
+          alert("สมัครสมาชิกสำเร็จ! กรุณาเข้าสู่ระบบ");
+          toggleForm(); // สลับกลับไปหน้า Login ให้อัตโนมัติ
+        } else {
+          alert(
+            registerData.detail || "การสมัครสมาชิกผิดพลาด OTP อาจไม่ถูกต้อง",
+          );
+        }
+      } catch (error) {
+        console.error("Error:", error);
+        alert("ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้");
+      } finally {
+        setIsLoading(false);
+      }
+    }
   };
 
   const toggleForm = () => {

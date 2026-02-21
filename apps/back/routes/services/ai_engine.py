@@ -98,8 +98,8 @@ async def generate_location_prompt(location_name: str, context_text: str, client
         cleaned = clean_prompt_text(raw_prompt)
         # เอาแค่ 20 tags แรกก็พอ
         tags = [t.strip() for t in cleaned.split(',') if t.strip()]
-        if len(tags) > 20:
-            tags = tags[:20]
+        if len(tags) > 10:
+            tags = tags[:10]
         
         return ", ".join(tags)
 
