@@ -112,6 +112,8 @@ export default function MovieDashboard() {
   const [titleInput, setTitleInput] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [searchBar, setSearchBar] = useState("");
+  const [moviePics, setMoviePics] = useState<Record<string, string>>({});
+  const [userRole, setUserRole] = useState<string | null>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
@@ -141,7 +143,6 @@ export default function MovieDashboard() {
         if (res.ok) {
           const data = await res.json();
           setMovies(data);
-          console.log(data);
         } else {
           toast.error("Failed to load movies");
         }
@@ -151,8 +152,22 @@ export default function MovieDashboard() {
     }
   };
 
+  const fetchMoviePics = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/movies/pic/allMovies");
+      if (res.ok) {
+        const data = await res.json();
+        setMoviePics(data);
+      }
+    } catch (error) {
+      console.error("Error fetching movie pictures:", error);
+    }
+  };
+
   useEffect(() => {
     fetchMovies();
+    fetchMoviePics();
+    setUserRole(localStorage.getItem("user_role"));
   }, []);
 
   const handleDelete = async (e: React.MouseEvent, id: number) => {
@@ -289,9 +304,9 @@ export default function MovieDashboard() {
                   </button>
                 )}
                 <div className="h-48 bg-gray-200 flex items-center justify-center relative overflow-hidden">
-                  {movie.picPath ? (
+                  {moviePics[movie.id] ? (
                     <img
-                      src={movie.picPath}
+                      src={`http://127.0.0.1:8000/static/${moviePics[movie.id]}`}
                       alt={movie.movieTitle}
                       className="w-full h-full object-cover"
                     />

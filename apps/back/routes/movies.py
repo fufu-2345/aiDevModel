@@ -91,18 +91,68 @@ def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
 # get chunksContent.chunkDetail
 @router.get("/chapters/{chapter_id}/chunks-summary")
 def get_chunks_summary(chapter_id: int, session: Session = Depends(get_session)):
-    # 1. ตรวจสอบก่อนว่า Chapter นี้มีตัวตนไหม (Optional แต่แนะนำ)
     chapter = session.get(chapterContent, chapter_id)
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
-
-    # 2. Select เฉพาะ chunkContent ที่มี chapterId ตรงกัน
-    # เรียงลำดับตาม chunkNumber เพื่อความระเบียบ
     statement = select(chunkContent).where(chunkContent.chapterId == chapter_id).order_by(chunkContent.chunkNumber)
     chunks = session.exec(statement).all()
-
-    # 3. สร้าง Dictionary โดยใช้ Dictionary Comprehension
-    # { "เลข chunk": "รายละเอียด" }
     result = {str(chunk.chunkNumber): chunk.chunkDetail for chunk in chunks}
-
     return result
+
+@router.get("/chunk/{chapter_id}")
+def getChunk(chapter_id: int, session: Session = Depends(get_session)):
+    chapter = session.get(chapterContent, chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+        
+    statement = select(chunkContent).where(chunkContent.chapterId == chapter_id).order_by(chunkContent.chunkNumber)
+    chunks = session.exec(statement).all()
+    result = {}
+    for chunk in chunks:
+        result[str(chunk.chunkNumber)] = {
+            "text": chunk.chunkDetail,
+            "picRef": chunk.picRef
+        }
+    return result
+
+@router.get("/pic/allMovies")
+def get_all_movies_pictures(session: Session = Depends(get_session)):
+    statement = (
+        select(chapterContent.movieId, chunkContent.picRef)
+        .join(chapterContent, chapterContent.id == chunkContent.chapterId)
+        .where(chunkContent.picRef != None)
+        .where(chunkContent.picRef != "") 
+        .order_by(chapterContent.movieId, chunkContent.chapterId, chunkContent.chunkNumber)
+    )
+    results = session.exec(statement).all()
+    movies_pic = {}
+    for movie_id, pic_ref in results:
+        m_id_str = str(movie_id)
+        if m_id_str not in movies_pic:
+            movies_pic[m_id_str] = pic_ref
+    return movies_pic
+
+@router.get("/pic/{movieId}")
+def get_movie_pictures(movieId: int, session: Session = Depends(get_session)):
+    statement = (
+        select(chunkContent.chapterId, chunkContent.picRef)
+        .join(chapterContent, chapterContent.id == chunkContent.chapterId)
+        .where(chapterContent.movieId == movieId)
+        .where(chunkContent.picRef != None)
+        .where(chunkContent.picRef != "") 
+        .order_by(chunkContent.chapterId, chunkContent.chunkNumber)
+    )
+    results = session.exec(statement).all()
+    chapters_pic = {}
+    movie_pic = None
+    for chapter_id, pic_ref in results:
+        ch_id_str = str(chapter_id) 
+        if ch_id_str not in chapters_pic:
+            chapters_pic[ch_id_str] = pic_ref
+            if movie_pic is None:
+                movie_pic = pic_ref
+                
+    return {
+        "moviePic": movie_pic,
+        "chapters": chapters_pic
+    }

@@ -56,6 +56,7 @@ interface Chapter {
   episodeNumber: number;
   chapterTitle: string;
   chapterDetail: string;
+  vdoPath: string | null;
   movieId: number;
 }
 
@@ -66,6 +67,7 @@ export default function ChapterReaderPage({
 }) {
   const [chapter, setChapter] = useState<Chapter | null>(null); // maina data
   const [loading, setLoading] = useState(true);
+  const [chunks, setChunks] = useState<any[]>([]);
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
@@ -88,6 +90,29 @@ export default function ChapterReaderPage({
           setChapter(data);
           setEditTitle(data.chapterTitle);
           setEditContent(data.chapterDetail || "");
+
+          try {
+            setLoading(true);
+            const response = await fetch(
+              `http://127.0.0.1:8000/movies/chunk/${chapterId}`,
+            );
+            if (!response.ok) throw new Error("Network response was not ok");
+            const data = await response.json();
+
+            const formattedChunks = Object.entries(data)
+              .map(([key, value]) => ({
+                id: parseInt(key, 10),
+                text: value.text,
+                picRef: value.picRef,
+              }))
+              .sort((a, b) => a.id - b.id);
+
+            setChunks(formattedChunks);
+          } catch (error) {
+            console.error("Error fetching data:", error);
+          } finally {
+            setLoading(false);
+          }
         } else {
           toast.error("Chapter not found");
         }
@@ -236,7 +261,7 @@ export default function ChapterReaderPage({
                 <>
                   <button
                     onClick={() => setIsEditing(false)}
-                    className="px-4 py-2 bg-gray-100 rounded-lg"
+                    className=" py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
                   >
                     Cancel
                   </button>
@@ -264,10 +289,49 @@ export default function ChapterReaderPage({
                 onChange={(e) => setEditContent(e.target.value)}
                 className="w-full h-[60vh] p-4 border rounded-lg font-mono text-lg"
               />
-            ) : (
+            ) : !chapter.vdoPath ? (
               <article className="prose prose-lg max-w-none whitespace-pre-wrap text-white">
                 {chapter.chapterDetail}
               </article>
+            ) : (
+              <div>
+                <video
+                  width="1280"
+                  height="640"
+                  controls
+                  className="rounded-lg shadow-lg"
+                >
+                  <source
+                    src={`http://127.0.0.1:8000/static/${chapter.vdoPath}`}
+                    type="video/mp4"
+                  />
+                  เบราว์เซอร์ของคุณไม่รองรับการเล่นวิดีโอ
+                </video>
+                <br />
+                <hr className="my-8 border-gray-300" />
+                <div>
+                  <div className="max-w-4xl mx-auto py-8 px-4 flex flex-col gap-12">
+                    {chunks.map((chunk) => (
+                      <div key={chunk.id} className="flex flex-col gap-6">
+                        {chunk.picRef && (
+                          <div className="w-full flex justify-center">
+                            <img
+                              src={`http://127.0.0.1:8000/static/${chunk.picRef}`}
+                              className="max-w-full h-auto object-contain rounded-md"
+                            />
+                          </div>
+                        )}
+
+                        {chunk.text && (
+                          <p className="text-lg md:text-xl leading-relaxed whitespace-pre-wrap text-white/90 font-serif">
+                            {chunk.text}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </div>

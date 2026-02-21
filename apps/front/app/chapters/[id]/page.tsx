@@ -74,6 +74,10 @@ export default function ChapterListPage({
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchBar, setSearchBar] = useState("");
+  const [pictures, setPictures] = useState<{
+    moviePic: string | null;
+    chapters: Record<string, string>;
+  }>({ moviePic: null, chapters: {} });
   const resolvedParams = use(params);
   const movieId = resolvedParams.id;
   const router = useRouter();
@@ -92,6 +96,13 @@ export default function ChapterListPage({
       if (chapterRes.ok) {
         const data = await chapterRes.json();
         setChapters(data);
+      }
+
+      const picRes = await fetch(`http://127.0.0.1:8000/movies/pic/${movieId}`);
+      if (picRes.ok) {
+        const picData = await picRes.json();
+        setPictures(picData);
+        console.log("assadasdas", picData);
       }
     } catch (error) {
       console.error("Error:", error);
@@ -170,9 +181,9 @@ export default function ChapterListPage({
 
           <div className="bg-white/10 backdrop-blur-md p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-8 items-start">
             <div className="w-80 h-60 bg-gray-200 rounded-xl overflow-hidden shadow-md flex-shrink-0">
-              {movie.picPath ? (
+              {pictures && pictures.moviePic ? (
                 <img
-                  src={movie.picPath}
+                  src={`http://127.0.0.1:8000/static/${pictures.moviePic}`}
                   alt={movie.movieTitle}
                   className="w-full h-full object-cover"
                 />
@@ -236,9 +247,9 @@ export default function ChapterListPage({
                   className="bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 border border-gray-100 overflow-hidden cursor-pointer group flex flex-col h-full"
                 >
                   <div className="aspect-video bg-gray-100 relative overflow-hidden">
-                    {chapter.picPath ? (
+                    {pictures && pictures.chapters[chapter.id] ? (
                       <img
-                        src={`http://127.0.0.1:8000/static/${chapter.picPath}`}
+                        src={`http://127.0.0.1:8000/static/${pictures.chapters[chapter.id]}`}
                         alt={chapter.chapterTitle}
                         className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                       />

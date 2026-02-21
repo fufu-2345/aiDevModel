@@ -41,9 +41,23 @@ export default function AuthPage() {
         const data = await response.json();
 
         if (response.ok) {
-          // เก็บ Token ใน LocalStorage
-          localStorage.setItem("access_token", data.access_token);
-          // ย้ายไปหน้า Archive
+          if (data.access_token) {
+            localStorage.setItem("access_token", data.access_token);
+          }
+
+          const roleToSave = data.role || data.user_role;
+          const emailToSave = data.email || formData.email;
+
+          if (roleToSave) {
+            localStorage.setItem("user_role", String(roleToSave));
+          }
+          if (emailToSave) {
+            localStorage.setItem("user_email", String(emailToSave));
+          }
+
+          alert(
+            `เข้าสู่ระบบสำเร็จ! สิทธิ์ของคุณคือ: ${roleToSave || "ไม่ระบุ"}`,
+          );
           window.location.href = "/archive";
         } else {
           alert(data.detail || "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง");
@@ -83,8 +97,7 @@ export default function AuthPage() {
           return;
         }
 
-        // Step 2.2: ใช้ window.prompt รับ OTP (เพราะเราจะไม่แก้ UI หน้าเว็บ)
-        // หน่วงเวลาเล็กน้อยเพื่อให้เบราว์เซอร์จัดการ state ได้นุ่มนวลขึ้น
+        // Step 2.2: ใช้ window.prompt รับ OTP
         await new Promise((resolve) => setTimeout(resolve, 100));
         const userEnteredOtp = window.prompt(
           `ระบบได้ส่ง OTP ไปที่ ${formData.email} แล้ว\nกรุณากรอกรหัส OTP 6 หลัก เพื่อยืนยันการสมัคร:`,
@@ -322,7 +335,7 @@ export default function AuthPage() {
         </div>
       </div>
 
-      <style jsx global>{`
+      <style>{`
         @keyframes fadeInUps {
           from {
             opacity: 0;
