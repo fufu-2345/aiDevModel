@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Swal from "sweetalert2";
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -55,31 +56,43 @@ export default function AuthPage() {
             localStorage.setItem("user_email", String(emailToSave));
           }
 
-          alert(
-            `เข้าสู่ระบบสำเร็จ! สิทธิ์ของคุณคือ: ${roleToSave || "ไม่ระบุ"}`,
-          );
+          await Swal.fire({
+            icon: "success",
+            title: "Success!",
+            text: `Login successful!`,
+            timer: 1500,
+            showConfirmButton: false,
+          });
           window.location.href = "/archive";
         } else {
-          alert(data.detail || "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง");
+          Swal.fire({
+            icon: "error",
+            title: "Login Failed",
+            text: data.detail || "Invalid email or password",
+          });
         }
       } catch (error) {
         console.error("Error:", error);
-        alert("ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้");
+        Swal.fire({
+          icon: "error",
+          title: "Connection Error",
+          text: "Unable to connect to the server.",
+        });
       } finally {
         setIsLoading(false);
       }
     } else {
-      // -----------------------------
-      // 2. ระบบ Sign Up (สมัครสมาชิก + OTP)
-      // -----------------------------
       if (formData.password !== formData.confirmPassword) {
-        alert("รหัสผ่านทั้งสองช่องไม่ตรงกัน!");
+        Swal.fire({
+          icon: "warning",
+          title: "Warning",
+          text: "Passwords do not match!",
+        });
         setIsLoading(false);
         return;
       }
 
       try {
-        // Step 2.1: ยิง API ไปขอ OTP ก่อน
         const otpResponse = await fetch(
           "http://127.0.0.1:8000/auth/request-otp",
           {
@@ -92,24 +105,39 @@ export default function AuthPage() {
         const otpData = await otpResponse.json();
 
         if (!otpResponse.ok) {
-          alert(otpData.detail || "ไม่สามารถขอ OTP ได้");
+          Swal.fire({
+            icon: "error",
+            title: "Failed to request OTP",
+            text: otpData.detail || "An error occurred while sending OTP.",
+          });
           setIsLoading(false);
           return;
         }
 
-        // Step 2.2: ใช้ window.prompt รับ OTP
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        const userEnteredOtp = window.prompt(
-          `ระบบได้ส่ง OTP ไปที่ ${formData.email} แล้ว\nกรุณากรอกรหัส OTP 6 หลัก เพื่อยืนยันการสมัคร:`,
-        );
+        const { value: userEnteredOtp } = await Swal.fire({
+          title: "Verify OTP",
+          text: `An OTP has been sent to ${formData.email}`,
+          input: "text",
+          inputPlaceholder: "Enter 6-digit OTP",
+          showCancelButton: true,
+          confirmButtonText: "Confirm",
+          cancelButtonText: "Cancel",
+          confirmButtonColor: "#f472b6",
+          inputValidator: (value) => {
+            if (!value) return "Please enter the OTP to confirm!";
+          },
+        });
 
         if (!userEnteredOtp) {
-          alert("ยกเลิกการสมัคร (ไม่ได้กรอก OTP)");
+          Swal.fire({
+            icon: "info",
+            title: "Cancelled",
+            text: "Registration cancelled (OTP not provided).",
+          });
           setIsLoading(false);
           return;
         }
 
-        // Step 2.3: ส่งข้อมูลทั้งหมด (Email, Password, OTP) ไปสมัครสมาชิก
         const registerResponse = await fetch(
           "http://127.0.0.1:8000/auth/register",
           {
@@ -126,16 +154,27 @@ export default function AuthPage() {
         const registerData = await registerResponse.json();
 
         if (registerResponse.ok) {
-          alert("สมัครสมาชิกสำเร็จ! กรุณาเข้าสู่ระบบ");
-          toggleForm(); // สลับกลับไปหน้า Login ให้อัตโนมัติ
+          await Swal.fire({
+            icon: "success",
+            title: "Success!",
+            text: "Registration successful! Please log in.",
+            confirmButtonColor: "#f472b6",
+          });
+          toggleForm();
         } else {
-          alert(
-            registerData.detail || "การสมัครสมาชิกผิดพลาด OTP อาจไม่ถูกต้อง",
-          );
+          Swal.fire({
+            icon: "error",
+            title: "Registration Failed",
+            text: registerData.detail || "Invalid OTP or other error occurred.",
+          });
         }
       } catch (error) {
         console.error("Error:", error);
-        alert("ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้");
+        Swal.fire({
+          icon: "error",
+          title: "Connection Error",
+          text: "Unable to connect to the server.",
+        });
       } finally {
         setIsLoading(false);
       }

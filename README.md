@@ -51,5 +51,9 @@ npx create-turbo@latest -e with-tailwind
 - [ESLint](https://eslint.org/) for code linting
 - [Prettier](https://prettier.io) for code formatting
 
+# Swagger
+
+http://127.0.0.1:8000/docs
+
 netstat -ano | findstr :8000  
 taskkill /IM python.exe /F

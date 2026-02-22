@@ -134,10 +134,16 @@ class BGGenerator:
             return None
 
         if self.device == "cuda":
+            if hasattr(self.pipe, "safety_checker"):
+                self.pipe.safety_checker = None
+            if hasattr(self.pipe, "requires_safety_checker"):
+                self.pipe.requires_safety_checker = False
+            if hasattr(self.pipe, "watermarker"):
+                self.pipe.watermarker = None
             self.pipe.enable_model_cpu_offload()
+            self.pipe.enable_vae_slicing()
         else:
             self.pipe.to(self.device)
-            self.pipe.enable_vae_slicing() 
 
         return self.pipe
 

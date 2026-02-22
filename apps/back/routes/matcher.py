@@ -33,11 +33,16 @@ def process_video_generation(chapter_id: int, session: Session):
     
     # ใช้ enumerate เพื่อให้รู้ index (ลำดับ) ของแต่ละภาพ
     for i, m in enumerate(matchers):
-        loc_path = os.path.join(IMAGE_BASE_DIR, m.location)
-        char_path = os.path.join(IMAGE_BASE_DIR, m.character)
+        # ป้องกันกรณีที่ m.location หรือ m.character เป็น None
+        loc_filename = str(m.location) if m.location else ""
+        char_filename = str(m.character) if m.character else ""
         
-        if not os.path.exists(loc_path) or not os.path.exists(char_path):
-            print(f"Warning: ข้าม Scene ID {m.id} เนื่องจากหาไฟล์ภาพไม่พบ (loc: {loc_path}, char: {char_path})")
+        loc_path = os.path.join(IMAGE_BASE_DIR, loc_filename)
+        char_path = os.path.join(IMAGE_BASE_DIR, char_filename)
+        
+        # แก้ไข: เปลี่ยนจาก os.path.exists เป็น os.path.isfile เพื่อป้องกันการอ่านโฟลเดอร์
+        if not os.path.isfile(loc_path) or not os.path.isfile(char_path):
+            print(f"Warning: ข้าม Scene ID {m.id} เนื่องจากหาไฟล์ภาพไม่พบ หรือ Path ชี้ไปที่โฟลเดอร์ (loc: '{loc_path}', char: '{char_path}')")
             continue
             
         # เช็คว่าเป็นภาพสุดท้ายหรือไม่

@@ -93,7 +93,6 @@ def load_image_pipe():
             use_safetensors=True
         )
 
-    # ปิดตัวช่วยความปลอดภัยเพื่อความเร็ว (Optional)
     if hasattr(pipe, "safety_checker"):
         pipe.safety_checker = None
     if hasattr(pipe, "requires_safety_checker"):
@@ -101,8 +100,13 @@ def load_image_pipe():
     if hasattr(pipe, "watermarker"):
         pipe.watermarker = None
         
-    pipe.to(device)    
-    
+    if device == "cuda":
+        pipe.enable_model_cpu_offload()
+        if is_xl:
+            pipe.enable_vae_slicing()
+    else:
+        pipe.to(device)
+    print(device)
     return pipe
 
 def generate_images_for_missing_refpaths(session: Session, movie_id: int):

@@ -84,8 +84,10 @@ def load_specific_models(needed_keys: Set[str]) -> tuple:
                 continue
                 
             print(f"   ... Loading {key} from {abs_path}", flush=True)
+            device = "cuda" if torch.cuda.is_available() else "cpu"
             tokenizers[key] = AutoTokenizer.from_pretrained(abs_path)
-            models[key] = VitsModel.from_pretrained(abs_path)
+            print(device)
+            models[key] = VitsModel.from_pretrained(abs_path).to(device)
             
         print("[Init] Models loaded successfully.", flush=True)
         return models, tokenizers
@@ -131,7 +133,9 @@ def _generate_via_local(text: str, model_key: str, models: Dict, tokenizers: Dic
         tokenizer = tokenizers[model_key]
         model = models[model_key]
 
-        inputs = tokenizer(text, return_tensors="pt")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(device)
+        inputs = tokenizer(text, return_tensors="pt").to(device)
 
         with torch.no_grad():
             output = model(**inputs).waveform

@@ -121,7 +121,6 @@ export default function ChapterListPage({
       if (picRes.ok) {
         const picData = await picRes.json();
         setPictures(picData);
-        console.log("assadasdas", picData);
       }
     } catch (error) {
       console.error("Error:", error);
