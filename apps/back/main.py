@@ -103,9 +103,6 @@ def load_image_pipe():
 
 async def generate_image_from_text(prompt: str) -> str:
     try:
-        # --- ตรงนี้คือส่วนที่คุณต้องใส่ Logic เชื่อมต่อ API ---
-        # ตัวอย่าง: response = await client.images.generate(prompt=prompt, ...)
-        # return response.data[0].url
         print(f"🎨 Generating image for: {prompt[:30]}...")
         return "https://example.com/generated-image.jpg" 
     except Exception as e:
@@ -120,8 +117,8 @@ async def translate_text(text: str, retries=3) -> str:
                 return result.text
         except Exception as e:
             print(f"Translation error (Attempt {attempt+1}): {e}")
-            await asyncio.sleep(1) # พักแป๊บนึงแล้วลองใหม่
-    return text # ถ้าแปลไม่ได้จริงๆ ให้คืนค่าเดิมกลับไปกัน error
+            await asyncio.sleep(1)
+    return text
 
 # createchunks
 @app.get("/create-chunks/{chapter_id}")
@@ -130,29 +127,24 @@ async def create_chunks_for_chapter(
     session: Session = Depends(get_session)
 ):
     start_time = time.perf_counter()
-    
-    # 1. ดึงข้อมูล Chapter
     chapter = session.get(chapterContent, chapter_id)
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
     
     if not chapter.chapterDetail:
         return {"status": "failed", "reason": "No content in chapterDetail"}
-
-    # ลบ Chunks เก่าทิ้งก่อน (ถ้ามี) เพื่อไม่ให้ข้อมูลซ้ำซ้อนเวลารันซ้ำ
     existing_chunks = session.exec(select(chunkContent).where(chunkContent.chapterId == chapter_id)).all()
     for old_chunk in existing_chunks:
         session.delete(old_chunk)
     session.commit()
 
-    # 2. เริ่มหั่น (Chunking Logic)
     lines = chapter.chapterDetail.split('\n')
     total_lines = len(lines)
     
     LINES_PER_CHUNK = 5  
     OVERLAP = 1          
     
-    raw_chunks = [] # เก็บ List ของ (text_thai)
+    raw_chunks = [] 
     
     if total_lines <= LINES_PER_CHUNK:
         raw_chunks.append(chapter.chapterDetail)
@@ -160,9 +152,6 @@ async def create_chunks_for_chapter(
         step = LINES_PER_CHUNK - OVERLAP
         for i in range(0, total_lines, step):
             chunk_lines = lines[i : i + LINES_PER_CHUNK]
-            
-            # Logic เดิม: ถ้าเหลือน้อยกว่า 3 บรรทัดจะข้ามไป
-            # (ระวังเนื้อหาตอนท้ายหาย หากประโยคสุดท้ายสั้นเกินไป)
             if len(chunk_lines) < 3 and len(raw_chunks) > 0:
                 break 
             
@@ -170,33 +159,21 @@ async def create_chunks_for_chapter(
             raw_chunks.append(chunk_text)
 
     print(f"Processing Chapter {chapter_id}: Found {len(raw_chunks)} chunks.")
-
-    # 3. Loop แปลและบันทึก
     saved_chunks_count = 0
-    
     for idx, thai_text in enumerate(raw_chunks):
         print(f"Processing chunk {idx+1}/{len(raw_chunks)}...")
-
-        # 1. แปลเป็น Eng
         eng_text = await translate_text(thai_text)
-        
-        # 2. สร้าง Object ลง DB (ตัดส่วน generate_image ออก)
         new_chunk = chunkContent(
             chunkNumber = idx + 1,
             chunkDetail = eng_text, 
-            picRef = None,           # ไม่ใส่ URL รูปภาพแล้ว
+            picRef = None,      
             chapterId = chapter_id
         )
         
         session.add(new_chunk)
         saved_chunks_count += 1
-        
-        # พักหายใจสั้นๆ เพื่อป้องกัน Rate Limit ของ API แปลภาษา
         await asyncio.sleep(0.5) 
-
-    # commit ทั้งหมดหลังจากจบ Loop
     session.commit()
-    
     duration = time.perf_counter() - start_time
     
     return {

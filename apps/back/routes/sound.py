@@ -22,24 +22,16 @@ router = APIRouter(
     tags=["sound"]
 )
 
-# ตั้งค่า Ollama API
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "gemma3:12b"
-
-# --- TTS CONFIGURATION ---
 TTS_MODE = "LOCAL" 
-
-# กรณีใช้ API
 TTS_API_URL = "http://localhost:5000/tts"
 
-# กรณีใช้ Local Files
 TTS_LOCAL_PATHS = {
     "narrator": "sound/new/male1",
     "male": "sound/new/male2",
     "female": "sound/new/female2"
 }
-
-# Mapping ประเภทเสียง
 TTS_MAPPING = {
     "narrator": "narrator", 
     "male": "male",         
@@ -47,11 +39,7 @@ TTS_MAPPING = {
     "unknown": "male"       
 }
 
-AUDIO_GAP_MS = 1000  # ช่องว่าง 1 วินาที
-
-# [REMOVED] ลบ Global Cache ออก เพื่อไม่ให้กิน RAM ค้าง
-# loaded_models = {} 
-# loaded_tokenizers = {}
+AUDIO_GAP_MS = 1000 
 
 def load_specific_models(needed_keys: Set[str]) -> tuple:
     """
@@ -61,34 +49,28 @@ def load_specific_models(needed_keys: Set[str]) -> tuple:
         return {}, {}
 
     print(f"[Init] Loading specific TTS models: {needed_keys}...", flush=True)
-    
-    # Lazy Import
+
     try:
         from transformers import VitsModel, AutoTokenizer
     except ImportError:
         print("[Error] transformers or torch not installed.", flush=True)
         return {}, {}
-    
     models = {}
     tokenizers = {}
-    
     try:
         for key in needed_keys:
             path = TTS_LOCAL_PATHS.get(key)
             if not path:
                 continue
-
             abs_path = os.path.abspath(path)
             if not os.path.exists(abs_path):
                 print(f"   [!] Model path not found: {abs_path}", flush=True)
                 continue
-                
             print(f"   ... Loading {key} from {abs_path}", flush=True)
             device = "cuda" if torch.cuda.is_available() else "cpu"
             tokenizers[key] = AutoTokenizer.from_pretrained(abs_path)
             print(device)
             models[key] = VitsModel.from_pretrained(abs_path).to(device)
-            
         print("[Init] Models loaded successfully.", flush=True)
         return models, tokenizers
     except Exception as e:
@@ -157,7 +139,6 @@ def _generate_via_local(text: str, model_key: str, models: Dict, tokenizers: Dic
         return None
 
 def get_dialogue_genders_from_ai(context_text: str, dialogue_texts: List[str]) -> List[str]:
-    # ... (ส่วน AI Code เดิม ไม่เปลี่ยนแปลง) ...
     dialogue_list_str = "\n".join([f"{i+1}. {text}" for i, text in enumerate(dialogue_texts)])
     
     prompt = f"""
@@ -262,39 +243,26 @@ def get_chunks_analysis(
     chapter_id: int, 
     session: Session = Depends(get_session)
 ):
-    # [TIMER START]
     start_time = time.time()
     print(f"--------------------------------------------------", flush=True)
     print(f"[Time] Processing started at: {time.strftime('%X')}", flush=True)
     print(f"[Phase 1] Fetching Data & Analyzing Text (AI)...", flush=True)
-
     statement = (
         select(chunkContent)
         .where(chunkContent.chapterId == chapter_id)
         .order_by(chunkContent.chunkNumber)
     )
     chunks = session.exec(statement).all()
-    
     if not chunks:
         raise HTTPException(status_code=404, detail="No chunks found")
-
     total_chunks = len(chunks)
-    
-    # ตัวแปรเก็บผลลัพธ์การวิเคราะห์ทั้งหมด
     all_chunks_data = {} 
-    # Set เก็บว่าเราต้องใช้เสียงใครบ้าง (เพื่อไปโหลดโมเดลทีเดียว)
     required_speaker_types = set()
-
-    # ---------------------------------------------------------
-    # WAVE 1 & 2: แยกประโยค (Regex) และ วิเคราะห์เพศ (AI)
-    # ---------------------------------------------------------
     for index, chunk in enumerate(chunks):
         print(f"   [Analyze] Chunk {chunk.chunkNumber}/{total_chunks}...", flush=True)
         
         target_text = chunk.chunkDetail.replace('\n', ' ')
         target_text = re.sub(r'\s+', ' ', target_text).strip()
-        
-        # Prepare Context
         start_idx = max(0, min(index - 1, total_chunks - 3))
         end_idx = min(total_chunks, start_idx + 3)
         context_chunks_list = chunks[start_idx:end_idx]
@@ -308,50 +276,29 @@ def get_chunks_analysis(
             segments = [{"text": target_text, "type": "narrator"}]
         else:
             segments = extract_dialogue_and_gender(target_text, context_text)
-        
-        # เก็บ segments ไว้ก่อน
         all_chunks_data[chunk.chunkNumber] = segments
-        
-        # เก็บว่าต้องใช้เสียงใครบ้าง
         for seg in segments:
             required_speaker_types.add(seg["type"])
-
-    # ---------------------------------------------------------
-    # WAVE 3: โหลดโมเดล -> สร้างเสียง -> คืน Memory
-    # ---------------------------------------------------------
     print(f"\n[Phase 2] Loading required TTS models...", flush=True)
-    
-    # 1. หาว่าต้องใช้โมเดลไฟล์ไหนบ้าง
     needed_model_keys = set()
     for st in required_speaker_types:
-        mapped = TTS_MAPPING.get(st, 'male') # unknown -> male
+        mapped = TTS_MAPPING.get(st, 'male') 
         needed_model_keys.add(mapped)
-    
-    # 2. โหลดโมเดล (Local Scope เท่านั้น)
     local_models, local_tokenizers = load_specific_models(needed_model_keys)
-    
     print(f"\n[Phase 3] Generating Audio...", flush=True)
     analysis_result = {}
     combined_audio = AudioSegment.empty()
     gap_segment = AudioSegment.silent(duration=AUDIO_GAP_MS)
     generated_segments_count = 0
-
-    # 3. วนลูปสร้างเสียงจากข้อมูลที่วิเคราะห์ไว้แล้ว
-    # เรียงลำดับตาม chunkNumber
     sorted_chunk_nums = sorted(all_chunks_data.keys())
-    
     for chunk_num in sorted_chunk_nums:
         segments = all_chunks_data[chunk_num]
         print(f"   [Audio] Generating Chunk {chunk_num}...", flush=True)
-        
         chunk_audio_duration_ms = 0
-        
         for seg in segments:
             text_part = seg["text"]
             speaker_type = seg["type"]
             clean_text = text_part.replace('"', '').replace('“', '').replace('”', '')
-            
-            # ส่ง local_models เข้าไป
             audio_seg = generate_tts_with_loaded_models(
                 clean_text, speaker_type, local_models, local_tokenizers
             )
@@ -368,22 +315,16 @@ def get_chunks_analysis(
             "segments": segments,
             "duration": chunk_audio_duration_ms / 1000.0
         }
-
-    # 4. Clean up Memory ทันทีหลังสร้างเสียงเสร็จ
     print(f"\n[Cleanup] Unloading models to free RAM...", flush=True)
     del local_models
     del local_tokenizers
-    gc.collect() # บังคับคืน RAM
+    gc.collect()
     
-    # ---------------------------------------------------------
-    # SAVE FILE & FINISH
-    # ---------------------------------------------------------
     if len(combined_audio) > 0:
         output_dir = os.path.abspath("public/storage/sound")
         os.makedirs(output_dir, exist_ok=True)
         output_filename = f"{chapter_id}.mp3"
         output_file_path = os.path.join(output_dir, output_filename)
-        
         print(f"[+] Saving audio to: {output_file_path}", flush=True)
         try:
             combined_audio.export(output_file_path, format="mp3")
@@ -396,34 +337,25 @@ def get_chunks_analysis(
             analysis_result["audio_status"] = f"error_exporting: {str(e)}"
     else:
         analysis_result["audio_status"] = "no_audio_generated"
-
     print(f"[Database] Inserting duration data to matcher table...", flush=True)
-    
-    # [NEW] สร้าง Dictionary Map ระหว่าง chunkNumber กับ id ของ chunkContent
     chunk_id_map = {str(c.chunkNumber): c.id for c in chunks}
     print(f"[Debug] chunk_id_map: {chunk_id_map}", flush=True)
 
     try:
         for chunk_num_str, data in analysis_result.items():
-            # ข้าม Key ที่ไม่ใช่ข้อมูล chunk (ต้องครอบคลุมทุก status keys ที่เราเพิ่มเข้าไป)
             if chunk_num_str in ["audio_status", "audio_file_path", "total_processing_time_seconds"]: 
                 continue
-            
-            # ตรวจสอบอีกชั้นเพื่อให้แน่ใจว่า data เป็น dict จริงๆ ก่อนเข้าถึง ["duration"]
             if isinstance(data, dict) and "duration" in data:
-                # ดึง id จาก Map ที่สร้างไว้
                 chunk_id = chunk_id_map.get(chunk_num_str)
                 print(f"   [DB] Chunk {chunk_num_str}: {data['duration']}s | mapped chunkContentId: {chunk_id}", flush=True)
-                
                 new_matcher = matcher(
                     character="",
                     location="",
                     duration=float(data["duration"]),
-                    chunkContentId=chunk_id,  # Map ข้อมูล chunkContentId
+                    chunkContentId=chunk_id,
                     chapterId=chapter_id
                 )
                 session.add(new_matcher)
-        
         session.commit()
         print(f"[Database] Matcher records inserted successfully.", flush=True)
     except Exception as e:

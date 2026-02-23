@@ -22,20 +22,13 @@ router = APIRouter(
     tags=["extractEntities"]
 )
 
-# --- Configuration ---
 ollamaURL = "http://localhost:11434/api/generate"
 extractModel = "gemma3:12b" 
-
-# Image Generation Config
 stabilityModel = "stabilityai/stable-diffusion-xl-base-1.0" 
+GENERATE_ENTITY_IMAGES = True 
 
-# Toggle Entity Image Generation
-GENERATE_ENTITY_IMAGES = True # Set to False to skip generating images for Items/Entities
+MAX_TAGS = 10 # limit
 
-# Limits
-MAX_TAGS = 10 
-
-# Blocklist: คำทั่วไปที่ไม่ควรเป็นชื่อตัวละคร
 GENERIC_NAMES = {
     "man", "woman", "boy", "girl", "child", "kid", "baby", "children",
     "uncle", "aunt", "father", "mother", "dad", "mom", "parent", "parents",
@@ -52,13 +45,11 @@ GENERIC_NAMES = {
     "third uncle", "second uncle", "fourth uncle" 
 }
 
-# Blocklist: Tag ที่ไม่มีประโยชน์ในการ Gen ภาพ หรือซ้ำซ้อนกับ Gender
 BANNED_TAGS = {
     "person", "unknown", "man", "woman", "male", "female", "boy", "girl", 
     "human", "character", "someone", "people"
 }
 
-# --- Helper Functions ---
 
 def parse_tags_to_set(tags_input):
     """แปลง Tags string/list ให้เป็น Set เพื่อตัดคำซ้ำ"""
@@ -112,16 +103,11 @@ def load_image_pipe():
 def generate_images_for_missing_refpaths(session: Session, movie_id: int):
     """สร้างภาพให้ตัวละคร/วัตถุที่ยังไม่มีภาพ (refpath ว่าง)"""
     print(f"🎨 Starting Image Generation for Movie ID: {movie_id}")
-    
-    # Query หาตัวที่ยังไม่มีรูป (Character)
     char_statement = select(character).where(
         character.movieId == movie_id,
         (character.refpath == "") | (character.refpath == None)
     )
     chars_to_gen = session.exec(char_statement).all()
-
-    # Query หาตัวที่ยังไม่มีรูป (Entity - เฉพาะ Item)
-    # ตรวจสอบตัวแปร GENERATE_ENTITY_IMAGES
     ents_to_gen = []
     if GENERATE_ENTITY_IMAGES:
         ent_statement = select(entity).where(
@@ -133,28 +119,20 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
     if not chars_to_gen and not ents_to_gen:
         print("✨ No missing images found.")
         return
-
-    # Load Model
     pipeline = None
     try:
         pipeline = load_image_pipe()
     except Exception as e:
         print(f"❌ Failed to load Image Pipeline: {e}")
         return
-
-    # สร้าง Folder
     os.makedirs("public/storage/characters", exist_ok=True)
     os.makedirs("public/storage/entities", exist_ok=True)
 
     try:
-        # Loop สร้างภาพ Characters
         for char_obj in chars_to_gen:
             try:
-                # Prepare Tags: Split, Clean, and Deduplicate (Preserving Order)
                 i_tags_list = [t.strip() for t in char_obj.IdentityTags.split(',') if t.strip()]
                 m_tags_list = [t.strip() for t in char_obj.ModifierTags.split(',') if t.strip()]
-                
-                # Combine and Remove Duplicates
                 combined_tags = i_tags_list + m_tags_list
                 seen = set()
                 deduped_tags = []
@@ -162,21 +140,14 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                     if t.lower() not in seen:
                         deduped_tags.append(t)
                         seen.add(t.lower())
-                
-                # Limit to MAX_TAGS
                 limited_desc = ", ".join(deduped_tags[:MAX_TAGS])
                 desc = limited_desc if limited_desc else "character"
-                
-                # --- Prompt Engineering (Character) ---
-                # Positive: เน้นยืนนิ่ง มือเปล่า แขนแนบลำตัว คนเดียว
                 prompt = (
                     f"ancient chinese style, {desc}, full body shot, standing still, "
                     f"arms at sides, empty hands, looking directly at camera, "
                     f"neutral expression, soft studio lighting, no shadows on face, "
                     f"high quality, simple white background, solo, single person"
                 )
-                
-                # Negative: เพิ่ม holding object, multiple people
                 negative_prompt = (
                     "shadows, harsh lighting, cropped, cinematic lighting, hands on face, "
                     "distorted face, profile view, looking away, busy background, blurry, "
@@ -193,8 +164,6 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                     width=1024,
                     guidance_scale=7.0
                 ).images[0]
-                
-                # --- Remove Background (Character) ---
                 print(f"Removing background for {char_obj.name}...")
                 image = remove(image)
                 
@@ -206,42 +175,29 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                 session.commit() 
             except Exception as e:
                 print(f"❌ Error generating character {char_obj.name}: {e}")
-
-        # Loop สร้างภาพ Entities (Items Only) - จะทำงานเฉพาะเมื่อ ents_to_gen มีข้อมูล
         for ent_obj in ents_to_gen:
             try:
                 e_type_lower = ent_obj.type.lower()
-                
-                # ข้ามถ้าไม่ใช่ Item (เผื่อมีข้อมูลเก่าที่เป็น Location หลงเหลืออยู่)
                 if "item" not in e_type_lower:
                     continue
-
-                # Limit Visual Tags
                 v_tags_list = [t.strip() for t in ent_obj.visual_tags.split(',') if t.strip()]
-                
-                # Deduplicate
                 seen = set()
                 deduped_tags = []
                 for t in v_tags_list:
                     if t.lower() not in seen:
                         deduped_tags.append(t)
                         seen.add(t.lower())
-
                 desc = ", ".join(deduped_tags[:MAX_TAGS])
-                
-                # Positive: Product shot, white bg
                 prompt = (
                     f"ancient chinese style object, {desc}, product photography, centered shot, "
                     f"isolated on white background, studio lighting, soft shadows, high detail, "
                     f"8k, sharp focus, realistic texture, professional lighting"
                 )
-                # Negative
                 negative_prompt = (
                     "nsfw, nude, naked, 18+, human, hands, holding, fingers, person, "
                     "messy background, text, watermark, blurry, low quality, distortion, "
                     "cropped, out of frame, worst quality"
                 )
-
                 print(f"Generating Item: {ent_obj.name}...")
                 image = pipeline(
                     prompt=prompt,
@@ -251,8 +207,6 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                     width=1024,
                     guidance_scale=7.0
                 ).images[0]
-                
-                # --- Remove Background (Item) ---
                 print(f"Removing background for item: {ent_obj.name}...")
                 image = remove(image)
                 
@@ -470,9 +424,6 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                 else:
                     print(f"Chunk {idx+1} Failed Extraction")
 
-        # ----------------------------------------------------------------
-        # STRICT SMART MERGE LOGIC
-        # ----------------------------------------------------------------
         merged_list = []
         all_raw_entities = []
         for res in results:
@@ -537,11 +488,9 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                 existing_name_lower = " ".join(existing["name"].lower().split())
                 existing_alts_lower = {" ".join(a.lower().split()) for a in existing["altNames"]}
                 
-                # --- STRICT MERGE RULES ---
                 is_name_match = current_name_lower == existing_name_lower
                 is_new_in_old_alts = current_name_lower in existing_alts_lower
                 is_old_in_new_alts = existing_name_lower in current_alts_lower
-                # Substring check with stricter length > 5
                 is_substring = (current_name_lower in existing_name_lower or existing_name_lower in current_name_lower) \
                                and len(current_name_lower) > 5 and len(existing_name_lower) > 5
 

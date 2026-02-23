@@ -27,32 +27,26 @@ def process_video_generation(chapter_id: int, session: Session):
         return
         
     scene_clips = []
-    IMAGE_BASE_DIR = "public/storage/pic/"
+    IMAGE_BASE_DIR = "public/"
     
     total_scenes = len(matchers)
     
-    # ใช้ enumerate เพื่อให้รู้ index (ลำดับ) ของแต่ละภาพ
     for i, m in enumerate(matchers):
-        # ป้องกันกรณีที่ m.location หรือ m.character เป็น None
         loc_filename = str(m.location) if m.location else ""
         char_filename = str(m.character) if m.character else ""
         
         loc_path = os.path.join(IMAGE_BASE_DIR, loc_filename)
         char_path = os.path.join(IMAGE_BASE_DIR, char_filename)
         
-        # แก้ไข: เปลี่ยนจาก os.path.exists เป็น os.path.isfile เพื่อป้องกันการอ่านโฟลเดอร์
         if not os.path.isfile(loc_path) or not os.path.isfile(char_path):
-            print(f"Warning: ข้าม Scene ID {m.id} เนื่องจากหาไฟล์ภาพไม่พบ หรือ Path ชี้ไปที่โฟลเดอร์ (loc: '{loc_path}', char: '{char_path}')")
+            print(f"--- Warning: ข้าม Scene ID {m.id} ---")
+            print(f"    RAW DB ค่าจากฐานข้อมูล -> location: '{m.location}', character: '{m.character}'")
+            print(f"    Path ที่โค้ดพยายามหา   -> loc: '{loc_path}', char: '{char_path}'")
             continue
-            
-        # เช็คว่าเป็นภาพสุดท้ายหรือไม่
         is_last_scene = (i == total_scenes - 1)
-        
-        # ตั้งค่าระยะเวลา fade (ภาพสุดท้าย = 1 วินาที, ภาพอื่น = 0.5 วินาที)
         fade_dur = 1.0 if is_last_scene else 0.5
         
         hold_duration = float(m.duration)
-        # ถ้าเป็นภาพสุดท้าย ให้บวกเวลาค้างเพิ่มไปอีก 1 วินาที
         if is_last_scene:
             hold_duration += 1.0
             
@@ -64,8 +58,6 @@ def process_video_generation(chapter_id: int, session: Session):
         char = ImageClip(char_path)
         bg_w, bg_h = bg.size
         char_w, char_h = char.size
-        
-        # รับค่า anim_dur มาเพื่อปรับเวลาลอยลงมาให้ตรงกับ fade_dur
         def make_char_pos(bg_height, char_height, anim_dur):
             def char_pos(t):
                 if t <= anim_dur:
@@ -92,22 +84,13 @@ def process_video_generation(chapter_id: int, session: Session):
     audio_path = f"public/storage/sound/{chapter_id}.mp3"
     if os.path.exists(audio_path):
         audio = AudioFileClip(audio_path)
-        
-        # คำนวณเวลาสูงสุดที่เสียงเล่นได้ (หัก 1 วินาทีที่เป็นช่วง Delay)
         max_audio_duration = final_video.duration - 1
         
         if max_audio_duration > 0:
-            # ตัดความยาวเสียงไม่ให้เกินเวลาที่เหลือของวิดีโอ
             if audio.duration > max_audio_duration:
                 audio = audio.subclipped(0, max_audio_duration)
-            
-            # ตั้งค่าให้เสียงเริ่มเล่นที่วินาทีที่ 1 ของ Timeline วิดีโอ
             audio = audio.with_start(1)
-            
-            # ใช้ CompositeAudioClip เพื่อบังคับให้ Timeline เสียงเคารพตำแหน่ง with_start(1)
             final_audio = CompositeAudioClip([audio]).with_duration(final_video.duration)
-            
-            # นำเสียงที่ประกอบเสร็จแล้วไปใส่ในวิดีโอ
             final_video = final_video.with_audio(final_audio)
     else:
         print(f"Warning: ไม่พบไฟล์เสียงที่ {audio_path}")

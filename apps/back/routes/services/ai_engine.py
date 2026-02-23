@@ -9,7 +9,6 @@ import torch
 from diffusers import StableDiffusionXLPipeline
 from dotenv import load_dotenv
 
-# พยายาม import psutil
 try:
     import psutil
 except ImportError:
@@ -17,17 +16,13 @@ except ImportError:
 
 load_dotenv()
 
-# ================= CONFIG =================
-# ความละเอียดภาพสุดท้าย (Visual Novel Standard)
 IMG_WIDTH = 1280
 IMG_HEIGHT = 720
 
-# Model Paths
 ollamaURL = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api/generate")
 ollamaModel = os.getenv("OLLAMA_MODEL", "gemma3:12b")
 stabilityModel = "C:\\stability matrix\\Data\\Models\\StableDiffusion\\juggernautXL_ragnarokBy.safetensors"
 
-# ================= UTILS =================
 def flush_memory():
     gc.collect()
     if torch.cuda.is_available():
@@ -39,13 +34,10 @@ def log_memory():
         print(f"   📊 RAM: {mem.percent}%")
 
 def clean_prompt_text(text):
-    # ลบตัวอักษรพิเศษและวงเล็บ
     text = re.sub(r"[\[\]\{\}\"']", "", text)
-    # ลบการขึ้นบรรทัดใหม่
     text = text.replace("\n", " ")
     return text.strip()
 
-# ================= OLLAMA LOGIC =================
 async def analyze_script_content(chunk_text: str, client: httpx.AsyncClient):
     """
     Phase 1: อ่านบทเพื่อดูว่า 'ใคร' อยู่ 'ที่ไหน'
@@ -94,9 +86,7 @@ async def generate_location_prompt(location_name: str, context_text: str, client
         res = await client.post(ollamaURL, json={"model": ollamaModel, "prompt": prompt, "stream": False}, timeout=300.0)
         raw_prompt = res.json().get("response", "").strip()
         
-        # ✅ ตัด Prompt ให้สั้นลงเพื่อแก้ปัญหา Token เกิน
         cleaned = clean_prompt_text(raw_prompt)
-        # เอาแค่ 20 tags แรกก็พอ
         tags = [t.strip() for t in cleaned.split(',') if t.strip()]
         if len(tags) > 10:
             tags = tags[:10]
@@ -113,7 +103,6 @@ async def unload_ollama(client: httpx.AsyncClient):
         print("   ✅ Ollama Unloaded.")
     except: pass
 
-# ================= SDXL LOGIC (Background Only) =================
 class BGGenerator:
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -154,33 +143,24 @@ class BGGenerator:
         log_memory()
         print(f"   🎨 Generating BG: {prompt[:50]}...")
         
-        # ✅ ปรับ Style เป็น Realistic / Cinematic
         style = "cinematic, photorealistic, highly detailed, 8k, masterpiece, raw photo, realistic lighting, unreal engine 5 render, sharp focus"
-        
-        # ✅ Negative Prompt ดักทาง Anime/Cartoon
         neg = "anime, cartoon, illustration, drawing, painting, people, humans, person, text, watermark, bad quality, blurry, crowd, lowres, distorted"
-        
-        # รวม Prompt
         final_prompt = f"{style}, {prompt}"
-        
-        # ตัดความยาว Prompt (Safety Check) SDXL รับได้ประมาณ 77 tokens (~300 chars)
-        # Juggernaut อาจรับได้เยอะกว่า แต่ตัดเพื่อความชัวร์
         if len(final_prompt) > 1000:
             final_prompt = final_prompt[:1000]
 
         image = pipe(
             prompt=final_prompt,
             negative_prompt=neg,
-            height=768, width=1280, # แนวนอน 16:9
-            num_inference_steps=30, # เพิ่ม Step นิดหน่อยให้ Juggernaut ทำงานได้เต็มที่
+            height=768, width=1280,
+            num_inference_steps=30,
             guidance_scale=7.5
         ).images[0]
         
         image = image.resize((IMG_WIDTH, IMG_HEIGHT), Image.Resampling.LANCZOS)
         image.save(output_path)
         return True
-
-# ================= COMPOSITION LOGIC (The Visual Novel Part) =================
+    
 class VNComposer:
     def process_character(self, img_path):
         """โหลดรูปตัวละคร (ที่ตัดพื้นหลังมาแล้ว)"""
@@ -191,25 +171,18 @@ class VNComposer:
         """
         รวมร่าง: BG + ตัวละครตามจำนวน
         """
-        # 1. โหลด Background
         if bg_path and os.path.exists(bg_path):
             bg = Image.open(bg_path).convert("RGBA")
         else:
             print("   ❌ BG not found, creating black canvas.")
             bg = Image.new("RGBA", (IMG_WIDTH, IMG_HEIGHT), "black")
-            
         bg = bg.resize((IMG_WIDTH, IMG_HEIGHT), Image.Resampling.LANCZOS)
-
-        # 2. กรองเฉพาะรูปที่โหลดได้จริง
         valid_chars = []
         for p in character_paths:
             img = self.process_character(p)
             if img: valid_chars.append(img)
             
         count = len(valid_chars)
-        # print(f"   👥 Placing {count} characters...")
-
-        # 3. คำนวณตำแหน่ง
         char_target_h = int(IMG_HEIGHT * 0.85)
         
         positions = []
@@ -221,14 +194,12 @@ class VNComposer:
             positions = [0.2, 0.5, 0.8] # ซ้าย, กลาง, ขวา (เอาแค่ 3 คนแรก)
             valid_chars = valid_chars[:3]
 
-        # 4. วางตัวละคร
         for i, char_img in enumerate(valid_chars):
-            # Resize
             aspect_ratio = char_img.width / char_img.height
             new_w = int(char_target_h * aspect_ratio)
             char_img = char_img.resize((new_w, char_target_h), Image.Resampling.LANCZOS)
             
-            # คำนวณ X, Y
+
             center_x = int(IMG_WIDTH * positions[i])
             paste_x = center_x - (new_w // 2)
             paste_y = IMG_HEIGHT - char_target_h + 30 

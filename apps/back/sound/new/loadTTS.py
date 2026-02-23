@@ -4,21 +4,17 @@ import soundfile as sf
 from transformers import VitsModel, VitsTokenizer, AutoTokenizer
 
 def download_and_test_models():
-    # 1. นิยามโมเดลทั้งหมดที่ต้องการ (โฟลเดอร์ : ID บน Hugging Face)
     models_to_process = {
         "male2": "VIZINTZOR/MMS-TTS-THAI-MALEV2",
         "male1": "VIZINTZOR/MMS-TTS-THAI-MALE-NARRATOR",
         "female2": "VIZINTZOR/MMS-TTS-THAI-FEMALEV2"
     }
 
-    # เช็คอุปกรณ์ (GPU/CPU)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[*] กำลังเริ่มการทำงานผ่าน: {device.upper()}\n")
 
     for local_dir, model_id in models_to_process.items():
         print(f"--- กำลังจัดการโมเดล: {model_id} ---")
-
-        # 2. ตรวจสอบว่ามีในเครื่องหรือยัง ถ้าไม่มีให้โหลดใหม่
         if os.path.exists(local_dir):
             print(f"[*] พบโมเดลในเครื่องแล้วที่: {local_dir} (กำลังโหลดเข้า Memory...)")
             tokenizer = AutoTokenizer.from_pretrained(local_dir)

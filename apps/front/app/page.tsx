@@ -26,9 +26,6 @@ export default function AuthPage() {
     setIsLoading(true);
 
     if (isLogin) {
-      // -----------------------------
-      // 1. ระบบ Login (เข้าสู่ระบบ)
-      // -----------------------------
       try {
         const response = await fetch("http://127.0.0.1:8000/auth/login", {
           method: "POST",
