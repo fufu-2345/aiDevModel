@@ -382,18 +382,20 @@ export default function MovieDashboard() {
                 </div>
               </div>
             ))}
-            <button
-              onClick={() => setIsModalOpen(true)}
-              disabled={isEditMode}
-              className={`h-[280px] rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 transition gap-2 group ${isEditMode ? "opacity-50 cursor-not-allowed" : "hover:bg-white/30"}`}
-            >
-              <div
-                className={`w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center transition ${!isEditMode}`}
+            {userRole === "admin" && (
+              <button
+                onClick={() => setIsModalOpen(true)}
+                disabled={isEditMode}
+                className={`h-[280px] rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 transition gap-2 group ${isEditMode ? "opacity-50 cursor-not-allowed" : "hover:bg-white/30"}`}
               >
-                <PlusIcon className="w-6 h-6" />
-              </div>
-              <span className="font-medium text-white">Add New Movie</span>
-            </button>
+                <div
+                  className={`w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center transition ${!isEditMode}`}
+                >
+                  <PlusIcon className="w-6 h-6" />
+                </div>
+                <span className="font-medium text-white">Add New Movie</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

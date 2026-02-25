@@ -97,51 +97,54 @@ export default function ChapterReaderPage({
   const delay = (ms: number) =>
     new Promise((resolve) => setTimeout(resolve, ms));
 
+  const fetchChapter = async () => {
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:8000/movies/chapters/${chapterId}`,
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setChapter(data);
+        setEditTitle(data.chapterTitle);
+        setEditContent(data.chapterDetail || "");
+
+        try {
+          setLoading(true);
+          const response = await fetch(
+            `http://127.0.0.1:8000/movies/chunk/${chapterId}`,
+          );
+          if (!response.ok) throw new Error("Network response was not ok");
+          const data = await response.json();
+
+          const formattedChunks = Object.entries(data)
+            .map(([key, value]: [string, any]) => ({
+              id: parseInt(key, 10),
+              text: (value as any).text,
+              picRef: (value as any).picRef,
+            }))
+            .sort((a, b) => a.id - b.id);
+
+          setChunks(formattedChunks);
+        } catch (error) {
+          console.error("Error fetching data:", error);
+        } finally {
+          setLoading(false);
+        }
+      } else {
+        toast.error("Chapter not found");
+      }
+    } catch (error) {
+      toast.error("Failed to load");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!chapterId) return;
-    const fetchChapter = async () => {
-      try {
-        const res = await fetch(
-          `http://127.0.0.1:8000/movies/chapters/${chapterId}`,
-        );
-        if (res.ok) {
-          const data = await res.json();
-          setChapter(data);
-          setEditTitle(data.chapterTitle);
-          setEditContent(data.chapterDetail || "");
-
-          try {
-            setLoading(true);
-            const response = await fetch(
-              `http://127.0.0.1:8000/movies/chunk/${chapterId}`,
-            );
-            if (!response.ok) throw new Error("Network response was not ok");
-            const data = await response.json();
-
-            const formattedChunks = Object.entries(data)
-              .map(([key, value]: [string, any]) => ({
-                id: parseInt(key, 10),
-                text: (value as any).text,
-                picRef: (value as any).picRef,
-              }))
-              .sort((a, b) => a.id - b.id);
-
-            setChunks(formattedChunks);
-          } catch (error) {
-            console.error("Error fetching data:", error);
-          } finally {
-            setLoading(false);
-          }
-        } else {
-          toast.error("Chapter not found");
-        }
-      } catch (error) {
-        toast.error("Failed to load");
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchChapter();
+    setUserRole(localStorage.getItem("user_role"));
+    console.log(localStorage.getItem("user_role"));
   }, [chapterId]);
 
   const extractGen = async () => {
@@ -164,6 +167,7 @@ export default function ChapterReaderPage({
       const response4 = await fetch(
         `http://127.0.0.1:8000/matcher/${chapterId}`,
       );
+      fetchChapter();
     } catch (error) {
       console.error("err API:", error);
     }
@@ -266,34 +270,38 @@ export default function ChapterReaderPage({
                 <LogoutIcon className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
                 <span>Logout</span>
               </button>
-              <button
-                onClick={() => extractGen()}
-                className=" py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
-              >
-                Gen Pic
-              </button>
-              {isEditing ? (
+              {userRole === "admin" && (
                 <>
                   <button
-                    onClick={() => setIsEditing(false)}
+                    onClick={() => extractGen()}
                     className=" py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
                   >
-                    Cancel
+                    Gen Pic
                   </button>
-                  <button
-                    onClick={handleSave}
-                    className="py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
-                  >
-                    <SaveIcon className="w-4 h-4" /> Save
-                  </button>
+                  {isEditing ? (
+                    <>
+                      <button
+                        onClick={() => setIsEditing(false)}
+                        className=" py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleSave}
+                        className="py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
+                      >
+                        <SaveIcon className="w-4 h-4" /> Save
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => setIsEditing(true)}
+                      className="py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
+                    >
+                      <EditIcon className="w-4 h-4" /> Edit
+                    </button>
+                  )}
                 </>
-              ) : (
-                <button
-                  onClick={() => setIsEditing(true)}
-                  className="py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
-                >
-                  <EditIcon className="w-4 h-4" /> Edit
-                </button>
               )}
             </div>
           </div>

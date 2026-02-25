@@ -243,6 +243,15 @@ def get_chunks_analysis(
     chapter_id: int, 
     session: Session = Depends(get_session)
 ):
+    output_file_path = os.path.abspath(f"public/storage/sound/{chapter_id}.mp3")
+    if os.path.exists(output_file_path):
+        # print(f"{chapter_id}.mp3 is already exist", flush=True)
+        return {
+            "audio_status": "already_exists",
+            "audio_file_path": output_file_path,
+            "message": f"{chapter_id}.mp3 is already exist"
+        }
+    
     start_time = time.time()
     print(f"--------------------------------------------------", flush=True)
     print(f"[Time] Processing started at: {time.strftime('%X')}", flush=True)
@@ -252,6 +261,7 @@ def get_chunks_analysis(
         .where(chunkContent.chapterId == chapter_id)
         .order_by(chunkContent.chunkNumber)
     )
+        
     chunks = session.exec(statement).all()
     if not chunks:
         raise HTTPException(status_code=404, detail="No chunks found")
