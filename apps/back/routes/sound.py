@@ -98,7 +98,7 @@ def _generate_via_api(text: str, model_key: str) -> Optional[AudioSegment]:
     payload = {"text": text, "model_id": model_id, "lang": "tha"}
     
     try:
-        response = requests.post(TTS_API_URL, json=payload, timeout=30)
+        response = requests.post(TTS_API_URL, json=payload, timeout=60)
         response.raise_for_status()
         audio_data = BytesIO(response.content)
         return AudioSegment.from_file(audio_data)

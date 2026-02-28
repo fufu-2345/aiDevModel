@@ -153,7 +153,7 @@ class BGGenerator:
             prompt=final_prompt,
             negative_prompt=neg,
             height=768, width=1280,
-            num_inference_steps=30,
+            num_inference_steps=20,
             guidance_scale=7.5
         ).images[0]
         
