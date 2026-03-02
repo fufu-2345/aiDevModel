@@ -69,7 +69,6 @@ def load_specific_models(needed_keys: Set[str]) -> tuple:
             print(f"   ... Loading {key} from {abs_path}", flush=True)
             device = "cuda" if torch.cuda.is_available() else "cpu"
             tokenizers[key] = AutoTokenizer.from_pretrained(abs_path)
-            print(device)
             models[key] = VitsModel.from_pretrained(abs_path).to(device)
         print("[Init] Models loaded successfully.", flush=True)
         return models, tokenizers
@@ -253,9 +252,8 @@ def get_chunks_analysis(
         }
     
     start_time = time.time()
-    print(f"--------------------------------------------------", flush=True)
+    print(f"start sound", flush=True)
     print(f"[Time] Processing started at: {time.strftime('%X')}", flush=True)
-    print(f"[Phase 1] Fetching Data & Analyzing Text (AI)...", flush=True)
     statement = (
         select(chunkContent)
         .where(chunkContent.chapterId == chapter_id)
@@ -269,7 +267,7 @@ def get_chunks_analysis(
     all_chunks_data = {} 
     required_speaker_types = set()
     for index, chunk in enumerate(chunks):
-        print(f"   [Analyze] Chunk {chunk.chunkNumber}/{total_chunks}...", flush=True)
+        print(f"Analyze Chunk {chunk.chunkNumber}/{total_chunks}", flush=True)
         
         target_text = chunk.chunkDetail.replace('\n', ' ')
         target_text = re.sub(r'\s+', ' ', target_text).strip()
@@ -289,7 +287,7 @@ def get_chunks_analysis(
         all_chunks_data[chunk.chunkNumber] = segments
         for seg in segments:
             required_speaker_types.add(seg["type"])
-    print(f"\n[Phase 2] Loading required TTS models...", flush=True)
+    print(f"\n[Phase 2] Loading required TTS models", flush=True)
     needed_model_keys = set()
     for st in required_speaker_types:
         mapped = TTS_MAPPING.get(st, 'male') 
@@ -347,9 +345,7 @@ def get_chunks_analysis(
             analysis_result["audio_status"] = f"error_exporting: {str(e)}"
     else:
         analysis_result["audio_status"] = "no_audio_generated"
-    print(f"[Database] Inserting duration data to matcher table...", flush=True)
     chunk_id_map = {str(c.chunkNumber): c.id for c in chunks}
-    print(f"[Debug] chunk_id_map: {chunk_id_map}", flush=True)
 
     try:
         for chunk_num_str, data in analysis_result.items():
@@ -357,7 +353,7 @@ def get_chunks_analysis(
                 continue
             if isinstance(data, dict) and "duration" in data:
                 chunk_id = chunk_id_map.get(chunk_num_str)
-                print(f"   [DB] Chunk {chunk_num_str}: {data['duration']}s | mapped chunkContentId: {chunk_id}", flush=True)
+                print(f"Chunk {chunk_num_str}: {data['duration']}s | mapped chunkContentId: {chunk_id}", flush=True)
                 new_matcher = matcher(
                     character="",
                     location="",
@@ -371,13 +367,9 @@ def get_chunks_analysis(
     except Exception as e:
         session.rollback()
         print(f"[Database Error] Failed to insert matcher: {e}", flush=True)
-        
     end_time = time.time()
     total_duration = end_time - start_time
-    print(f"--------------------------------------------------", flush=True)
-    print(f"[Time] Total processing time: {total_duration:.2f} seconds", flush=True)
-    print(f"--------------------------------------------------", flush=True)
-    
+    print(f"Total processing time: {total_duration:.2f} seconds", flush=True)
     analysis_result["total_processing_time_seconds"] = total_duration
 
     return analysis_result

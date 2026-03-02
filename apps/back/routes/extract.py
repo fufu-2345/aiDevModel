@@ -27,7 +27,14 @@ extractModel = "gemma3:12b"
 stabilityModel = "stabilityai/stable-diffusion-xl-base-1.0" 
 GENERATE_ENTITY_IMAGES = True 
 
-MAX_TAGS = 10 # limit
+MAX_TAGS = 10
+
+CHUNK_SIZE = 3 
+CHUNK_OVERLAP = 1  
+
+genItem=false
+genLocation=false
+# ==========================================
 
 GENERIC_NAMES = {
     "man", "woman", "boy", "girl", "child", "kid", "baby", "children",
@@ -159,11 +166,11 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                 image = pipeline(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
-                    num_inference_steps=20, 
+                    num_inference_steps=30, 
                     height=1024, 
                     width=1024,
                     guidance_scale=7.0
-                ).images[0]
+                ).images
                 print(f"Removing background for {char_obj.name}...")
                 image = remove(image)
                 
@@ -178,7 +185,7 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
         for ent_obj in ents_to_gen:
             try:
                 e_type_lower = ent_obj.type.lower()
-                if "item" not in e_type_lower:
+                if "item" not in e_type_lower or not genItem:
                     continue
                 v_tags_list = [t.strip() for t in ent_obj.visual_tags.split(',') if t.strip()]
                 seen = set()
@@ -202,11 +209,11 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                 image = pipeline(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
-                    num_inference_steps=20, 
+                    num_inference_steps=30, 
                     height=1024, 
                     width=1024,
                     guidance_scale=7.0
-                ).images[0]
+                ).images
                 print(f"Removing background for item: {ent_obj.name}...")
                 image = remove(image)
                 
@@ -257,18 +264,16 @@ async def create_and_save_chunks(session: Session, chapter: chapterContent):
     lines = chapter.chapterDetail.split('\n')
     total_lines = len(lines)
     
-    LINES_PER_CHUNK = 5  
-    OVERLAP = 1          
-    step = LINES_PER_CHUNK - OVERLAP
+    step = CHUNK_SIZE - CHUNK_OVERLAP
     
     raw_chunks_data = [] 
     
-    if total_lines <= LINES_PER_CHUNK:
+    if total_lines <= CHUNK_SIZE:
         raw_chunks_data.append((chapter.chapterDetail, chapter.chapterDetail))
     else: 
         for i in range(0, total_lines, step):
             # 1. ส่วน Overlap (สำหรับ AI)
-            chunk_lines_overlap = lines[i : i + LINES_PER_CHUNK]
+            chunk_lines_overlap = lines[i : i + CHUNK_SIZE]
             if len(chunk_lines_overlap) < 3 and len(raw_chunks_data) > 0:
                 break 
             text_overlap = "\n".join(chunk_lines_overlap)
@@ -279,7 +284,7 @@ async def create_and_save_chunks(session: Session, chapter: chapterContent):
             if next_start_idx >= total_lines:
                 is_last_chunk = True
             else:
-                next_chunk_lines = lines[next_start_idx : next_start_idx + LINES_PER_CHUNK]
+                next_chunk_lines = lines[next_start_idx : next_start_idx + CHUNK_SIZE]
                 if len(next_chunk_lines) < 3: 
                     is_last_chunk = True
             
@@ -492,7 +497,7 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                 is_new_in_old_alts = current_name_lower in existing_alts_lower
                 is_old_in_new_alts = existing_name_lower in current_alts_lower
                 is_substring = (current_name_lower in existing_name_lower or existing_name_lower in current_name_lower) \
-                               and len(current_name_lower) > 5 and len(existing_name_lower) > 5
+                               and len(current_name_lower) > 6 and len(existing_name_lower) > 6
 
                 if is_name_match or is_new_in_old_alts or is_old_in_new_alts or is_substring:
                     match_found = True

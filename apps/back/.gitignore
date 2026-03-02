@@ -8,3 +8,6 @@ public/storage/sound/*
 public/storage/vdo/*
 ipAdapter/*
 output_audio/*
+*.mp3
+*.wav
+.home_fake/*

@@ -1,3 +1,25 @@
+import os
+
+# --- HOTFIX: ป้องกัน Error Environment Variables หาย (ทั้ง PyTorch และ cached_path) ---
+# 1. จำลอง Username ให้ PyTorch
+if "USERNAME" not in os.environ and "USER" not in os.environ:
+    os.environ["USERNAME"] = "local_user"
+
+# 2. จำลองโฟลเดอร์ Home ให้ไลบรารี cached_path และ pathlib
+fake_home = os.path.abspath(".home_fake")
+os.makedirs(fake_home, exist_ok=True) # สร้างโฟลเดอร์หลอกๆ ไว้ในโปรเจกต์
+
+# แยกเช็คและตั้งค่าทีละตัวแปร เพื่อป้องกันกรณีที่บางตัวแปรมีอยู่แล้วแต่บางตัวหายไป
+if "USERPROFILE" not in os.environ or not os.environ["USERPROFILE"]:
+    os.environ["USERPROFILE"] = fake_home
+if "HOME" not in os.environ or not os.environ["HOME"]:
+    os.environ["HOME"] = fake_home
+if "HOMEDRIVE" not in os.environ:
+    os.environ["HOMEDRIVE"] = fake_home[:2] if len(fake_home) >= 2 else "C:"
+if "HOMEPATH" not in os.environ:
+    os.environ["HOMEPATH"] = fake_home[2:] if len(fake_home) >= 2 else fake_home
+# ---------------------------------------------------------------------------------
+
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -8,7 +30,6 @@ from fastapi.staticfiles import StaticFiles
 import asyncio
 import requests
 import json
-import os
 import time
 import gc
 import re
@@ -51,7 +72,7 @@ IP_ADAPTER_REPO = "h94/IP-Adapter"
 IP_ADAPTER_SUBFOLDER = "sdxl_models" 
 IP_ADAPTER_FILENAME = "ip-adapter-plus-face_sdxl_vit-h.bin"
 
-from routes import movies, uploadPDF, createPic, extract, sound, matcher, auth, F5TTS
+from routes import movies, uploadPDF, createPic, extract, sound, matcher, auth#, F5TTS
 app.include_router(movies.router)
 app.include_router(uploadPDF.router)
 app.include_router(createPic.router)
@@ -59,7 +80,7 @@ app.include_router(extract.router)
 app.include_router(sound.router)
 app.include_router(matcher.router)
 app.include_router(auth.router)
-app.include_router(F5TTS.router)
+# app.include_router(F5TTS.router)
 
 def load_image_pipe():
     device = "cuda" if torch.cuda.is_available() else "cpu"

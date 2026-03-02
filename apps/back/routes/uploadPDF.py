@@ -228,7 +228,7 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                 image = pipeline(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
-                    num_inference_steps=25,
+                    num_inference_steps=30,
                     height=1024, 
                     width=1024,
                     guidance_scale=7.0

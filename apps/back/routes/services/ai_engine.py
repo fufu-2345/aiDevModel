@@ -143,8 +143,8 @@ class BGGenerator:
         log_memory()
         print(f"   🎨 Generating BG: {prompt[:50]}...")
         
-        style = "cinematic, photorealistic, highly detailed, 8k, masterpiece, raw photo, realistic lighting, unreal engine 5 render, sharp focus"
-        neg = "anime, cartoon, illustration, drawing, painting, people, humans, person, text, watermark, bad quality, blurry, crowd, lowres, distorted"
+        style = "cinematic, photorealistic, highly detailed, 8k, masterpiece, raw photo, realistic lighting, unreal engine 5 render, sharp focus, ancient chinese architecture,"
+        neg = "anime, cartoon, illustration, drawing, painting, people, humans, person, text, watermark, bad quality, blurry, crowd, lowres, distortedmodern, futuristic, sci-fi, western architecture"
         final_prompt = f"{style}, {prompt}"
         if len(final_prompt) > 1000:
             final_prompt = final_prompt[:1000]
@@ -153,7 +153,7 @@ class BGGenerator:
             prompt=final_prompt,
             negative_prompt=neg,
             height=768, width=1280,
-            num_inference_steps=20,
+            num_inference_steps=30,
             guidance_scale=7.5
         ).images[0]
         
