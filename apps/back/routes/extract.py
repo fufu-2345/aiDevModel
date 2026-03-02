@@ -22,6 +22,9 @@ router = APIRouter(
     tags=["extractEntities"]
 )
 
+# ==========================================
+# CONFIGURATIONS
+# ==========================================
 ollamaURL = "http://localhost:11434/api/generate"
 extractModel = "gemma3:12b" 
 stabilityModel = "stabilityai/stable-diffusion-xl-base-1.0" 
@@ -32,8 +35,10 @@ MAX_TAGS = 10
 CHUNK_SIZE = 3 
 CHUNK_OVERLAP = 1  
 
-genItem=false
-genLocation=false
+genItem = False
+genLocation = False
+
+MIN_SUBSTRING_LENGTH = 6
 # ==========================================
 
 GENERIC_NAMES = {
@@ -104,7 +109,6 @@ def load_image_pipe():
             pipe.enable_vae_slicing()
     else:
         pipe.to(device)
-    print(device)
     return pipe
 
 def generate_images_for_missing_refpaths(session: Session, movie_id: int):
@@ -163,25 +167,41 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                 )
                 
                 print(f"Generating Character: {char_obj.name}...")
-                image = pipeline(
+                
+                # ทำการ Generate ภาพ
+                pipeline_output = pipeline(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
                     num_inference_steps=30, 
                     height=1024, 
                     width=1024,
                     guidance_scale=7.0
-                ).images
+                )
+                
+                # print(pipeline_output)
+                generated_images = pipeline_output.images
+                if isinstance(generated_images, list):
+                    # print("cccc")
+                    single_image = generated_images[0]
+                else:
+                    print("something wrong")
+                    single_image = generated_images.images
+                
+                if single_image.mode != "RGB":
+                    single_image = single_image.convert("RGB")
+                    
                 print(f"Removing background for {char_obj.name}...")
-                image = remove(image)
+                final_image = remove(single_image)
                 
                 filename = f"storage/characters/{char_obj.id}.png"
-                image.save(f"public/{filename}")
+                final_image.save(f"public/{filename}")
                 
                 char_obj.refpath = filename
                 session.add(char_obj)
                 session.commit() 
             except Exception as e:
                 print(f"❌ Error generating character {char_obj.name}: {e}")
+                
         for ent_obj in ents_to_gen:
             try:
                 e_type_lower = ent_obj.type.lower()
@@ -206,19 +226,34 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                     "cropped, out of frame, worst quality"
                 )
                 print(f"Generating Item: {ent_obj.name}...")
-                image = pipeline(
+                
+                # ทำการ Generate ภาพ
+                pipeline_output = pipeline(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
                     num_inference_steps=30, 
                     height=1024, 
                     width=1024,
                     guidance_scale=7.0
-                ).images
+                )
+                # print("item:")
+                # print(pipeline_output)
+                generated_images = pipeline_output.images
+                if isinstance(generated_images, list):
+                    print("aaaaaaa")
+                    single_image = generated_images[0]
+                else:
+                    print("something wrong")
+                    single_image = generated_images.images
+                
+                if single_image.mode != "RGB":
+                    single_image = single_image.convert("RGB")
+                    
                 print(f"Removing background for item: {ent_obj.name}...")
-                image = remove(image)
+                final_image = remove(single_image)
                 
                 filename = f"storage/entities/{ent_obj.id}.png"
-                image.save(f"public/{filename}")
+                final_image.save(f"public/{filename}")
                 
                 ent_obj.refpath = filename
                 session.add(ent_obj)
@@ -412,7 +447,7 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
     
     final_output = {
         "characters": [],
-        "items": [], # Removed locations from output structure
+        "items": [], 
         "status": "extracted"
     }
 
@@ -439,7 +474,7 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
             e_type = raw.get("type", "").strip().capitalize()
             name = raw.get("name", "").strip()
             
-            # Skip if Location (just in case LLM hallucinates)
+            # Skip if Location
             if "location" in e_type.lower():
                 continue
             
@@ -466,23 +501,17 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                     print(f"⚠️ Skipped generic entity: {name}")
                     continue
 
-            # CLEAN TAGS (Remove Banned, Dedupe)
             i_tags = parse_tags_to_set(raw.get("IdentityTags"))
             m_tags = parse_tags_to_set(raw.get("ModifierTags"))
             v_tags = parse_tags_to_set(raw.get("VisualTags"))
             
             i_tags = {t for t in i_tags if t.lower() not in BANNED_TAGS}
             m_tags = {t for t in m_tags if t.lower() not in BANNED_TAGS}
-            # Remove tags in Modifier that are also in Identity
             m_tags = {t for t in m_tags if t.lower() not in {it.lower() for it in i_tags}}
 
-            # Prepare lowercase sets for strict comparison
-            # Normalize with split/join to handle extra spaces
             current_name_lower = " ".join(name.lower().split())
             current_alts_lower = {" ".join(a.lower().split()) for a in current_alts}
             
-            # Note: Removed gender extraction from raw since user reverted prompt
-            # Will default to "Unknown" if not in prompt, or use existing if merging
             gender = raw.get("gender", "Unknown").strip().capitalize()
 
             match_found = False
@@ -496,8 +525,9 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                 is_name_match = current_name_lower == existing_name_lower
                 is_new_in_old_alts = current_name_lower in existing_alts_lower
                 is_old_in_new_alts = existing_name_lower in current_alts_lower
+                
                 is_substring = (current_name_lower in existing_name_lower or existing_name_lower in current_name_lower) \
-                               and len(current_name_lower) > 6 and len(existing_name_lower) > 6
+                               and len(current_name_lower) > MIN_SUBSTRING_LENGTH and len(existing_name_lower) > MIN_SUBSTRING_LENGTH
 
                 if is_name_match or is_new_in_old_alts or is_old_in_new_alts or is_substring:
                     match_found = True
@@ -579,7 +609,6 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                 v_list = sorted(list(data["VisualTags"]))[:MAX_TAGS]
                 formatted_data["VisualTags"] = ", ".join(v_list)
                 
-                # removed Location
                 if "item" in e_type_lower:
                     final_output["items"].append(formatted_data)
 

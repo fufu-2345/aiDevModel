@@ -115,7 +115,6 @@ def _generate_via_local(text: str, model_key: str, models: Dict, tokenizers: Dic
         model = models[model_key]
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(device)
         inputs = tokenizer(text, return_tensors="pt").to(device)
 
         with torch.no_grad():
