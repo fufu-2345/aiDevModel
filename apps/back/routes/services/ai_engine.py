@@ -31,7 +31,7 @@ def flush_memory():
 def log_memory():
     if psutil:
         mem = psutil.virtual_memory()
-        print(f"   📊 RAM: {mem.percent}%")
+        print(f"RAM: {mem.percent}%")
 
 def clean_prompt_text(text):
     text = re.sub(r"[\[\]\{\}\"']", "", text)
@@ -112,7 +112,7 @@ class BGGenerator:
     def load_pipeline(self):
         if self.pipe: return self.pipe
         
-        print(f"   🚀 Loading SDXL for Background ({self.device})...")
+        print(f"Loading Background ({self.device})...")
         try:
             if stabilityModel.endswith(".safetensors"):
                 self.pipe = StableDiffusionXLPipeline.from_single_file(stabilityModel, torch_dtype=self.dtype, use_safetensors=True)
@@ -141,7 +141,7 @@ class BGGenerator:
         if not pipe: return False
         
         log_memory()
-        print(f"   🎨 Generating BG: {prompt[:50]}...")
+        print(f"   Generating BG: {prompt[:50]}...")
         
         style = "cinematic, photorealistic, highly detailed, 8k, masterpiece, raw photo, realistic lighting, unreal engine 5 render, sharp focus, ancient chinese architecture,"
         neg = "anime, cartoon, illustration, drawing, painting, people, humans, person, text, watermark, bad quality, blurry, crowd, lowres, distortedmodern, futuristic, sci-fi, western architecture"
@@ -210,5 +210,5 @@ class VNComposer:
         # 5. Save Final
         final_img = bg.convert("RGB")
         final_img.save(output_path)
-        print(f"   ✅ Scene Saved: {os.path.basename(output_path)}")
+        print(f"Saved: {os.path.basename(output_path)}")
         return True

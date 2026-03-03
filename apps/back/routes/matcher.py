@@ -49,7 +49,6 @@ def process_video_generation(chapter_id: int, session: Session):
         loc_path = os.path.join(IMAGE_BASE_DIR, loc_filename)
 
         if not os.path.isfile(loc_path):
-            print(f"Warning: ข้าม Scene ID {m.id} เนื่องจากหาไฟล์ Background ไม่พบ")
             continue
 
         # ดึงรายชื่อตัวละครทั้งหมดและกรองเอาเฉพาะไฟล์ที่มีอยู่จริง + ตัดคนซ้ำออก
@@ -70,7 +69,6 @@ def process_video_generation(chapter_id: int, session: Session):
 
         if valid_matchers and valid_matchers[-1]["loc"] == loc_path and valid_matchers[-1]["chars"] == valid_chars:
             valid_matchers[-1]["duration"] += current_dur
-            print(f"Info: ดักจับภาพซ้ำ - รวม Scene ID {m.id} เข้ากับฉากก่อนหน้าแล้ว")
         else:
             valid_matchers.append({
                 "data": m,
@@ -108,7 +106,7 @@ def process_video_generation(chapter_id: int, session: Session):
         if ENABLE_CHARACTER_OVERLAY and valid_chars:
             N = len(valid_chars)
             char_names = [os.path.basename(c) for c in valid_chars]
-            print(f"ฉากที่ {i+1} กำลังรวม Background: {m.location} กับ ตัวละคร {N} ตัว: {', '.join(char_names)}")
+            print(f"chunk {i+1} Background: {m.location} characters {N}: {', '.join(char_names)}")
             
             char_clips = []
             bg_w, bg_h = bg.size
@@ -148,7 +146,7 @@ def process_video_generation(chapter_id: int, session: Session):
                 
             scene = CompositeVideoClip([bg] + char_clips)
         else:
-            print(f"ฉากที่ {i+1} ใช้แค่ Background: {m.location}")
+            print(f"chunk {i+1} Background: {m.location}")
             scene = bg
             
         scene_clips.append(scene)
@@ -160,9 +158,7 @@ def process_video_generation(chapter_id: int, session: Session):
     final_video = concatenate_videoclips(scene_clips, method="compose")
     
     print(f"\n==================================================")
-    print(f"เตรียมเรนเดอร์วิดีโอ Chapter: {chapter_id}")
-    print(f"จำนวน Scene ทั้งหมดที่ใช้ (หลังหักภาพซ้ำ): {total_scenes} ฉาก")
-    print(f"ความยาววิดีโอรวมทั้งหมด (วินาที): {final_video.duration} วินาที")
+    print(f"vdo len: {final_video.duration} sec")
     print(f"==================================================\n")
 
     audio_path = f"public/storage/sound/{chapter_id}.mp3"
@@ -195,7 +191,6 @@ def process_video_generation(chapter_id: int, session: Session):
     chapter.vdoPath = output_path
     session.add(chapter)
     session.commit()
-    print(f"Success: วิดีโอสำเร็จที่ {output_path}")
 
 @router.get("/{chapter_id}")
 def generate_chapter_video_endpoint(

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select, col, or_, cast, String, and_
 from typing import List
 from database import get_session 
-from models import movieTitle, chapterContent, chunkContent
+from models import movieTitle, chapterContent, chunkContent, matcher, character, altCharacter, entity, altEntity
 from pydantic import BaseModel
 
 router = APIRouter(
@@ -60,10 +60,30 @@ def delete_movie(movie_id: int, session: Session = Depends(get_session)):
     movie = session.get(movieTitle, movie_id)
     if not movie:
         raise HTTPException(status_code=404, detail="Movie not found")
-    
     chapters = session.exec(select(chapterContent).where(chapterContent.movieId == movie_id)).all()
     for chapter in chapters:
+        matchers = session.exec(select(matcher).where(matcher.chapterId == chapter.id)).all()
+        for m in matchers:
+            session.delete(m)
+        chunks = session.exec(select(chunkContent).where(chunkContent.chapterId == chapter.id)).all()
+        for chunk in chunks:
+            chunk_matchers = session.exec(select(matcher).where(matcher.chunkContentId == chunk.id)).all()
+            for cm in chunk_matchers:
+                session.delete(cm)
+            session.delete(chunk)
         session.delete(chapter)
+    characters = session.exec(select(character).where(character.movieId == movie_id)).all()
+    for char in characters:
+        alt_chars = session.exec(select(altCharacter).where(altCharacter.entityId == char.id)).all()
+        for alt in alt_chars:
+            session.delete(alt)
+        session.delete(char)
+    entities = session.exec(select(entity).where(entity.movieId == movie_id)).all()
+    for ent in entities:
+        alt_ents = session.exec(select(altEntity).where(altEntity.entityId == ent.id)).all()
+        for alt in alt_ents:
+            session.delete(alt)
+        session.delete(ent)
     session.delete(movie)
     session.commit()
     return {"ok": True}

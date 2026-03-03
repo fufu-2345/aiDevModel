@@ -53,7 +53,6 @@ class matcher(SQLModel, table=True):
     chunkContentId: Optional[int] = Field(default=None, foreign_key="chunkcontent.id")
     chapterId: Optional[int] = Field(default=None, foreign_key="chaptercontent.id")
 
-# ดึง get_session มาจากไฟล์ database 
 try:
     from database import get_session
 except ImportError:
@@ -114,7 +113,7 @@ async def generate_images_for_chapter(
     movie_id = chapter_info.movieId
     tasks_to_do = [] 
     missing_locations = {}
-    print("PHASE 1: Script Analysis & Checking Req")
+    print("Analysing")
     async with httpx.AsyncClient(timeout=120.0) as client:
         for chunk in all_chunks:
             needs_final_pic = not bool(chunk.picRef)
@@ -127,9 +126,7 @@ async def generate_images_for_chapter(
                 if not current_match.character or not current_match.location:
                     needs_matcher = True
             if not needs_final_pic and not needs_matcher:
-                print(f"   Skipping Chunk {chunk.chunkNumber} (All assets exist)")
                 continue 
-            print(f"   Analyzing Chunk {chunk.chunkNumber}... (Needs Pic: {needs_final_pic}, Needs Matcher: {needs_matcher})")
             text_input = chunk.chunkDetailEng if chunk.chunkDetailEng else chunk.chunkDetail
             if not text_input: continue
             meta = await analyze_script_content(text_input, client)
@@ -155,7 +152,7 @@ async def generate_images_for_chapter(
         await unload_ollama(client)
         flush_memory()
         if missing_locations:
-            print(f"🟢 [PHASE 2] Generating {len(missing_locations)} Backgrounds...")
+            print(f"Generate {len(missing_locations)} Backgrounds...")
             bg_gen = BGGenerator()
             for loc_name, data in missing_locations.items():
                 loc_entity = data['db_entity']
@@ -172,8 +169,7 @@ async def generate_images_for_chapter(
             session.commit()
             del bg_gen
             flush_memory()
-        print("PHASE 3: Preparing Matcher Images & Update...")
-        
+        print("Matching")
         for task in tasks_to_do:
             if not task['needs_matcher']:
                 continue 
@@ -226,10 +222,8 @@ async def generate_images_for_chapter(
             current_match.location = loca_filename
             current_match.character = cha_filename
             session.add(current_match)
-            print(f"      ✅ Matcher Chunk {chunk.chunkNumber} updated: {loca_filename}, {cha_filename}")
-
         session.commit()
-        print("PHASE 4: Final Composition...")
+        print("Save to DB")
         composer = VNComposer()
         success_count = 0
         for task in tasks_to_do:
