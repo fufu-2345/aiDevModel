@@ -54,7 +54,6 @@ async def analyze_script_content(chunk_text: str, client: httpx.AsyncClient):
     Output JSON: {{ "location_name": "...", "characters": ["Name1", "Name2"] }}
     """
     try:
-        # print(f"   [Ollama] extracting meta...")
         res = await client.post(ollamaURL, json={"model": ollamaModel, "prompt": prompt, "stream": False, "format": "json"}, timeout=300.0)
         clean_json = re.sub(r'```json\s*', '', res.json().get("response", "")).replace('```', '')
         match = re.search(r'\{.*\}', clean_json, re.DOTALL)
@@ -65,7 +64,7 @@ async def analyze_script_content(chunk_text: str, client: httpx.AsyncClient):
 
 async def generate_location_prompt(location_name: str, context_text: str, client: httpx.AsyncClient):
     """
-    Phase 2: ให้ AI ออกแบบ Visual Prompt (แบบสั้นและสมจริง)
+    Phase 2: ให้ AI ออกแบบ Visual Prompt
     """
     prompt = f"""
     Role: Environment Artist.
@@ -143,8 +142,8 @@ class BGGenerator:
         log_memory()
         print(f"   Generating BG: {prompt[:50]}...")
         
-        style = "cinematic, photorealistic, highly detailed, 8k, masterpiece, raw photo, realistic lighting, unreal engine 5 render, sharp focus, ancient chinese architecture,"
-        neg = "anime, cartoon, illustration, drawing, painting, people, humans, person, text, watermark, bad quality, blurry, crowd, lowres, distortedmodern, futuristic, sci-fi, western architecture"
+        style = "cinematic, photorealistic, highly detailed, 8k, masterpiece, raw photo, realistic lighting, unreal engine 5 render, sharp focus, ancient chinese architecture, wuxia, ancient Chinese"
+        neg = "anime, cartoon, illustration, drawing, painting, people, humans, person, text, watermark, bad quality, blurry, crowd, lowres, distortedmodern, modern, futuristic, sci-fi, western architecture, neon signs, skyscraper, concrete, technology, street lights, electricity, power lines, container ship, cargo ship, dock crane"
         final_prompt = f"{style}, {prompt}"
         if len(final_prompt) > 1000:
             final_prompt = final_prompt[:1000]

@@ -69,6 +69,47 @@ const LogoutIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+export const formatNovelText = (text: string) => {
+  if (!text) return null;
+
+  const paragraphs = text.split("\n");
+  let isFirstParagraph = true;
+  return paragraphs.map((paragraph, index) => {
+    const trimmedText = paragraph.trim();
+    if (!trimmedText) return <div key={index} className="h-4" />;
+    let processedText = trimmedText
+      .replace(/(\d+)/g, '<span class="text-sky-300">$1</span>')
+      .replace(
+        /“([^“”]+)”/g,
+        '<span class="text-amber-200 font-medium">“$1”</span>',
+      )
+      .replace(/‘([^‘’]+)’/g, '<span class="text-slate-400">‘$1’</span>')
+      .replace(
+        /(!|!!|!!!)/g,
+        '<span class="text-orange-400 font-bold text-2xl">$1</span>',
+      );
+
+    if (isFirstParagraph) {
+      isFirstParagraph = false;
+      processedText = processedText.replace(
+        /^((?:<[^>]+>)*)([“‘"']?(?:[\u0E40-\u0E44][\u0E01-\u0E2E]|.))([\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]*)/,
+        (match, p1, p2, p3) => {
+          const colorClass = p1.includes("text-") ? "" : "text-white";
+          return `${p1}<span class="text-[3.5rem] font-extrabold ${colorClass} leading-none align-baseline pr-[2px]">${p2}${p3}</span>`;
+        },
+      );
+    }
+
+    return (
+      <p
+        key={index}
+        className="mb-5 leading-[2.1] text-slate-200 tracking-wide font-light text-[1.15rem] text-justify indent-[2.5rem] first-of-type:indent-0 sm:indent-[1.5rem] sm:text-[1.05rem]"
+        dangerouslySetInnerHTML={{ __html: processedText }}
+      />
+    );
+  });
+};
+
 interface Chapter {
   id: number;
   episodeNumber: number;
@@ -313,9 +354,10 @@ export default function ChapterReaderPage({
                 className="w-full h-[60vh] p-4 border rounded-lg font-mono text-lg"
               />
             ) : !chapter.vdoPath ? (
-              <article className="prose prose-lg max-w-none whitespace-pre-wrap text-white">
-                {chapter.chapterDetail}
-              </article>
+              // ไม่มี vdo
+              <div className="w-full max-w-4xl mx-auto font-['Sarabun']">
+                {formatNovelText(chapter.chapterDetail)}
+              </div>
             ) : (
               <div>
                 <video

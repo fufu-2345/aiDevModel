@@ -22,9 +22,6 @@ router = APIRouter(
     tags=["extractEntities"]
 )
 
-# ==========================================
-# CONFIGURATIONS
-# ==========================================
 ollamaURL = "http://localhost:11434/api/generate"
 extractModel = "gemma3:12b" 
 stabilityModel = "stabilityai/stable-diffusion-xl-base-1.0" 
@@ -61,7 +58,6 @@ BANNED_TAGS = {
     "person", "unknown", "man", "woman", "male", "female", "boy", "girl", 
     "human", "character", "someone", "people"
 }
-
 
 def parse_tags_to_set(tags_input):
     """แปลง Tags string/list ให้เป็น Set เพื่อตัดคำซ้ำ"""
@@ -128,13 +124,13 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
         ents_to_gen = session.exec(ent_statement).all()
 
     if not chars_to_gen and not ents_to_gen:
-        print("✨ No missing images found.")
+        print("No missing images found.")
         return
     pipeline = None
     try:
         pipeline = load_image_pipe()
     except Exception as e:
-        print(f"❌ Failed to load Image Pipeline: {e}")
+        print(f"Failed to load Image Pipeline: {e}")
         return
     os.makedirs("public/storage/characters", exist_ok=True)
     os.makedirs("public/storage/entities", exist_ok=True)
@@ -153,17 +149,20 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                         seen.add(t.lower())
                 limited_desc = ", ".join(deduped_tags[:MAX_TAGS])
                 desc = limited_desc if limited_desc else "character"
+                
                 prompt = (
                     f"ancient chinese style, {desc}, full body shot, standing still, "
-                    f"arms at sides, empty hands, looking directly at camera, "
+                    f"(solo:1.4), relaxed pose, looking directly at camera, "
                     f"neutral expression, soft studio lighting, no shadows on face, "
                     f"high quality, simple white background, solo, single person"
                 )
+
                 negative_prompt = (
-                    "shadows, harsh lighting, cropped, cinematic lighting, hands on face, "
-                    "distorted face, profile view, looking away, busy background, blurry, "
-                    "low quality, nsfw, holding object, weapon, sword, multiple people, "
-                    "group, extra limbs"
+                    f"(multiple people:1.4), (extra person:1.2), (couple:1.2), (shadows:1.3), "
+                    f"harsh lighting, black border, (vignetting), (frame), hands on face, "
+                    f"(A-pose:1.3), T-pose, rigid pose, arms outstretched, deformed, blurry, "
+                    f"generate_images_for_missing_refpathslow quality, nsfw, holding object, "
+                    f"weapon, extra limbs, signature"
                 )
                 
                 print(f"Generating Character: {char_obj.name}...")
@@ -358,7 +357,6 @@ async def create_and_save_chunks(session: Session, chapter: chapterContent):
 
 async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel: str):
     """ส่ง Text Chunk ไปให้ LLM Extract ข้อมูล"""
-    # Prompt: Removed Location Extraction
     prompt = f"""
     Role:
     You are an AI Visual Director.
@@ -612,12 +610,12 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
                 if "item" in e_type_lower:
                     final_output["items"].append(formatted_data)
 
-        print(f"Extract Entities Time: {time.perf_counter() - start:.3f} seconds")
+        print(f"Extract Time: {time.perf_counter() - start:.3f} seconds")
 
         try:
             saved_status = save_extraction_result(session, chapter_id, final_output)
             if saved_status:
-                print("✅ Data successfully saved/updated in Database.")
+                print("save in Database.")
                 
                 session.refresh(chapter_obj)
                 if not chapter_obj.isExtracted:

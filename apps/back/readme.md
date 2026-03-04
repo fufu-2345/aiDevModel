@@ -7,6 +7,9 @@ uv venv
 
 upload -> extract -> gen -> done
 
+uv pip install -r requirementsF5.txt --extra-index-url https://download.pytorch.org/whl/cu124
+uv pip install -r requirements.txt
+
 extract:  
 http://127.0.0.1:8000/extractEntities/{chapterID}
 
