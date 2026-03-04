@@ -59,6 +59,7 @@ def clearThaiTypeing(text: str) -> str:
         "ฟญา": "ฟ้า",
         "เฟญง": "เฟิง",
         "ฝัีง": "ฝั่ง",
+        "ต่ํา": "ต่ำ",
     }
     fixed_text = text
     for wrong_word, correct_word in corrections.items():
