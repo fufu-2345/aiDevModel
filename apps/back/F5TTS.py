@@ -2,38 +2,33 @@ import os
 import sys
 import torch 
 
-# --- การตั้งค่าเฉพาะสำหรับ CPU ระดับ High-End (เช่น AMD 16 Cores / 32 Threads) ---
-# การใส่ 32 Threads จะทำให้เกิด Thread Thrashing (แย่งคิวกันทำงานจนช้า)
-# แนะนำให้ใช้เท่ากับจำนวน Physical Cores แทน (กรณีของคุณคือ 16) หรือลดเหลือ 8 ถ้ายังช้า
-optimal_threads = 16 
+# --- ลดการแย่งคิวกันทำงานของ CPU (ลดเหลือ 4-8 Threads พอครับ) ---
+optimal_threads = 8 
 
 os.environ["OMP_NUM_THREADS"] = str(optimal_threads)
 os.environ["MKL_NUM_THREADS"] = str(optimal_threads)
 os.environ["OPENBLAS_NUM_THREADS"] = str(optimal_threads)
-
-# ป้องกันไม่ให้ Thread แตกตัวซ้อนกัน (แก้ปัญหากราฟ CPU วิ่ง 0% สลับ 100%)
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 # -------------------------------------------------
 
-# แก้ปัญหา Path ตอนรัน uvicorn
 os.environ["CACHED_PATH_CACHE_ROOT"] = os.path.abspath(os.path.join(os.getcwd(), ".cache", "cached_path"))
 if sys.platform == "win32" and "USERPROFILE" not in os.environ:
     os.environ["USERPROFILE"] = os.path.abspath(os.getcwd())
 
-# ปิดตัวเร่งที่ทำให้เครื่องค้าง 
-torch.backends.mkldnn.enabled = False
+# 🚨 กฎเหล็กสำหรับ CPU: บังคับใช้ทศนิยม 32-bit (FP32) เท่านั้น ป้องกันเสียงเงียบและเครื่องค้าง 🚨
+torch.set_default_dtype(torch.float32)
 
-# กำหนด Thread ให้ PyTorch
+torch.backends.mkldnn.enabled = False
 torch.set_num_threads(optimal_threads) 
-torch.set_num_interop_threads(1) # ให้รันงานเดียว ไม่ต้องแตกย่อยซ้อนกันเพื่อลดคอขวด
+torch.set_num_interop_threads(1) 
 torch.set_grad_enabled(False)
 
 import uuid
 import traceback
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
-from torch.nn.attention import SDPBackend, sdpa_kernel # นำเข้าตัวควบคุม Attention
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 try:
     from f5_tts_th.tts import TTS
@@ -47,19 +42,25 @@ app = FastAPI(title="F5-TTS Worker (รันบน Python 3.11)")
 
 tts_model = None
 if has_f5:
-    print(f"[Worker] ⏳ กำลังโหลดโมเดล F5-TTS... (ตั้งค่าสำหรับ AMD Ryzen: {optimal_threads} Cores)")
+    print(f"[Worker] ⏳ กำลังโหลดโมเดล F5-TTS... (ตั้งค่า CPU: {optimal_threads} Threads, โหมด FP32)")
     try:
         tts_model = TTS(model="v1") 
+        # บังคับแปลงน้ำหนักโมเดลทั้งหมดให้เป็น Float32
+        tts_model.model.to(torch.float32)
+        if hasattr(tts_model, 'vocoder'):
+            tts_model.vocoder.to(torch.float32)
+            
         print("[Worker] ✅ โหลดโมเดลสำเร็จ พร้อมรับงานแล้ว!")
     except Exception as e:
         print(f"[Worker] ❌ โหลดโมเดลไม่สำเร็จ: {e}")
 
 REF_AUDIO_PATH = "narrator.wav"
-REF_TEXT = "เฮ้ยทุกคน เชื่อไหมว่าเดี๋ยวนี้ AI มันทำอะไรได้เยอะมากจริงๆ วันนี้ผมลองเล่นมาตัวนึง"
+# ตัดข้อความอ้างอิงให้สั้นลง เพื่อไม่ให้ติด Warning "Audio is over 15s, clipping short"
+REF_TEXT = "เฮ้ยทุกคน เชื่อไหมว่าเดี๋ยวนี้ AI มันทำอะไรได้เยอะมากจริงๆ"
 
 @app.get("/test_clone")
 def test_clone_browser():
-    text = "สวัสดีครับ นี่คือเสียงที่ถูกสร้างขึ้นมาใหม่ โดยใช้ค่าตัวแปรที่กำหนดไว้ล่วงหน้าทั้งหมดครับ"
+    text = "สวัสดีครับ นี่คือเสียงที่ถูกสร้างขึ้นมาใหม่ โดยบังคับใช้การคำนวณแบบสามสิบสองบิทครับ"
     
     print(f"[Worker] 📥 ได้รับงานใหม่: {text}")
     
@@ -72,20 +73,21 @@ def test_clone_browser():
     output_filename = f"temp_output_{uuid.uuid4().hex[:8]}.wav"
     
     try:
-        print(f"[Worker] ⚙️ กำลังเริ่มรัน AI (รันแบบล็อค {optimal_threads} Threads กราฟน่าจะนิ่งขึ้น)...")
+        print(f"[Worker] ⚙️ กำลังเริ่มรัน AI (แก้บั๊กเสียงเงียบด้วย Float32)...")
         
         with torch.no_grad():
             with torch.inference_mode():
-                # บังคับใช้คณิตศาสตร์ดั้งเดิม ป้องกัน AMD CPU ค้างที่ตัวคำนวณ Attention
-                with sdpa_kernel(SDPBackend.MATH):
-                    wav = tts_model.infer(
-                        ref_audio=REF_AUDIO_PATH,
-                        ref_text=REF_TEXT,
-                        gen_text=text,
-                        step=10,       
-                        cfg=2.0,       
-                        speed=1.0      
-                    )
+                # เกราะป้องกันชั้นที่ 2: บังคับ Autocast ให้เป็น Float32 ระหว่างคำนวณ
+                with torch.autocast(device_type="cpu", dtype=torch.float32):
+                    with sdpa_kernel(SDPBackend.MATH):
+                        wav = tts_model.infer(
+                            ref_audio=REF_AUDIO_PATH,
+                            ref_text=REF_TEXT,
+                            gen_text=text,
+                            step=10, # ใช้ 10 รอบในการทดสอบ     
+                            cfg=2.0,       
+                            speed=1.0      
+                        )
             
         print("[Worker] 💾 กำลังบันทึกไฟล์เสียง...")
         sf.write(output_filename, wav, 24000)
