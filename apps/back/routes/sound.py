@@ -3,9 +3,7 @@ import json
 import time
 import requests
 import re
-import numpy as np
 import gc 
-import torch
 from typing import List, Dict, Optional, Any, Set
 from io import BytesIO
 
@@ -24,14 +22,16 @@ router = APIRouter(
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "gemma3:12b"
-TTS_MODE = "LOCAL" 
-TTS_API_URL = "http://localhost:5000/tts"
+F5_API_URL = "http://localhost:8001/internal/generate" 
 
-TTS_LOCAL_PATHS = {
-    "narrator": "sound/new/male1",
-    "male": "sound/new/male2",
-    "female": "sound/new/female2"
+F5_REF_PATHS = {
+    "narrator": "F5sound/male.wav",
+    "male": "F5sound/male.wav",
+    "female": "F5sound/female.wav"
 }
+
+F5_REF_TEXT = "เฮ้ยทุกคน เชื่อไหมว่าเดี๋ยวนี้ AI มันทำอะไรได้เยอะมากจริงๆ วันนี้ผมลองเล่นมาตัวนึง"
+
 TTS_MAPPING = {
     "narrator": "narrator", 
     "male": "male",         
@@ -41,99 +41,34 @@ TTS_MAPPING = {
 
 AUDIO_GAP_MS = 1000 
 
-def load_specific_models(needed_keys: Set[str]) -> tuple:
-    """
-    โหลดโมเดลเฉพาะที่จำเป็นต้องใช้ในรอบนั้นๆ และคืนค่ากลับไปเป็น Dict
-    """
-    if TTS_MODE != "LOCAL":
-        return {}, {}
-
-    print(f"[Init] Loading specific TTS models: {needed_keys}...", flush=True)
-
-    try:
-        from transformers import VitsModel, AutoTokenizer
-    except ImportError:
-        print("[Error] transformers or torch not installed.", flush=True)
-        return {}, {}
-    models = {}
-    tokenizers = {}
-    try:
-        for key in needed_keys:
-            path = TTS_LOCAL_PATHS.get(key)
-            if not path:
-                continue
-            abs_path = os.path.abspath(path)
-            if not os.path.exists(abs_path):
-                print(f"   [!] Model path not found: {abs_path}", flush=True)
-                continue
-            print(f"   ... Loading {key} from {abs_path}", flush=True)
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            tokenizers[key] = AutoTokenizer.from_pretrained(abs_path)
-            models[key] = VitsModel.from_pretrained(abs_path).to(device)
-        print("[Init] Models loaded successfully.", flush=True)
-        return models, tokenizers
-    except Exception as e:
-        print(f"   [!] Error loading models: {e}", flush=True)
-        return {}, {}
-
-def generate_tts_with_loaded_models(
-    text: str, 
-    speaker_type: str, 
-    models: Dict, 
-    tokenizers: Dict
-) -> Optional[AudioSegment]:
-    """
-    สร้างเสียงโดยใช้โมเดลที่ส่งเข้ามา (ไม่ต้องพึ่ง Global)
-    """
+def _generate_via_f5_api(text: str, speaker_type: str) -> Optional[AudioSegment]:
+    if not text.strip():
+        return None
+        
     mapped_key = TTS_MAPPING.get(speaker_type, "male")
-    
-    if TTS_MODE == "API":
-        return _generate_via_api(text, mapped_key)
-    else:
-        return _generate_via_local(text, mapped_key, models, tokenizers)
-
-def _generate_via_api(text: str, model_key: str) -> Optional[AudioSegment]:
-    model_id = f"mms-tts-tha-{model_key}-v1" if model_key == "narrator" else f"mms-tts-tha-{model_key}-v2"
-    payload = {"text": text, "model_id": model_id, "lang": "tha"}
+    ref_audio_path = F5_REF_PATHS.get(mapped_key, "F5sound/male.wav")
     
     try:
-        response = requests.post(TTS_API_URL, json=payload, timeout=60)
-        response.raise_for_status()
+        payload = {
+            "text": text,
+            "speaker_type": mapped_key,
+            "ref_audio_path": ref_audio_path,
+            "ref_text": F5_REF_TEXT
+        }
+        
+        response = requests.post(F5_API_URL, data=payload, timeout=600)
+        
+        if response.status_code != 200:
+            print(f"   [!] F5 API Error ({response.status_code}): {response.text}", flush=True)
+            return None
+            
         audio_data = BytesIO(response.content)
-        return AudioSegment.from_file(audio_data)
-    except Exception as e:
-        print(f"   [!] API TTS Failed: {e}", flush=True)
+        return AudioSegment.from_file(audio_data, format="wav")
+    except requests.exceptions.ConnectionError:
+        print(f"   [!] Connection Refused: ไม่สามารถเชื่อมต่อ F5 ได้ที่พอร์ต 8001", flush=True)
         return None
-
-def _generate_via_local(text: str, model_key: str, models: Dict, tokenizers: Dict) -> Optional[AudioSegment]:
-    if model_key not in models:
-        print(f"   [!] Model '{model_key}' was not loaded for this batch.", flush=True)
-        return None
-
-    try:
-        tokenizer = tokenizers[model_key]
-        model = models[model_key]
-
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        inputs = tokenizer(text, return_tensors="pt").to(device)
-
-        with torch.no_grad():
-            output = model(**inputs).waveform
-        
-        waveform = output[0].numpy()
-        audio_data_int16 = (waveform * 32767).astype(np.int16)
-        
-        audio_segment = AudioSegment(
-            audio_data_int16.tobytes(), 
-            frame_rate=model.config.sampling_rate, 
-            sample_width=2, 
-            channels=1
-        )
-        
-        return audio_segment
-
     except Exception as e:
-        print(f"   [!] Local Inference Failed for '{text[:10]}...': {e}", flush=True)
+        print(f"   [!] F5 API Failed for '{text[:15]}...': {e}", flush=True)
         return None
 
 def get_dialogue_genders_from_ai(context_text: str, dialogue_texts: List[str]) -> List[str]:
@@ -152,14 +87,10 @@ def get_dialogue_genders_from_ai(context_text: str, dialogue_texts: List[str]) -
 
     Instructions:
     1. Look at the "Full Text" to find the context for each dialogue in the list.
-    2. Identify the speaker's gender based on:
-       - Polite particles inside the quote (e.g., "Krub/Kub" = male, "Kha/Ja" = female).
-       - Pronouns (e.g., "Phom/Krapom" = male, "Chan/Dichan" = female).
-       - Speaker names/descriptions in the narrator text immediately before or after the quote (e.g., "Han Li said", "Zhang Tie asked").
-       - Common Thai male names (e.g., Han Li, Zhang Tie, Lung Sam) -> male.
+    2. Identify the speaker's gender based on particles/pronouns (e.g., Krub/Kha, Phom/Chan) and context.
     3. Return 'male', 'female', or 'unknown'.
 
-    Return ONLY a JSON Object with a single list 'genders' containing exactly {len(dialogue_texts)} strings corresponding to the numbered list.
+    Return ONLY a JSON Object with a single list 'genders' containing exactly {len(dialogue_texts)} strings.
     Example: {{ "genders": ["male", "female", "male"] }}
     """
     
@@ -180,7 +111,6 @@ def get_dialogue_genders_from_ai(context_text: str, dialogue_texts: List[str]) -
             
             clean_response = content.replace('```json', '').replace('```', '').strip()
             data = json.loads(clean_response)
-            
             genders = data.get("genders", [])
             
             expected_count = len(dialogue_texts)
@@ -190,9 +120,7 @@ def get_dialogue_genders_from_ai(context_text: str, dialogue_texts: List[str]) -
                 genders = genders[:expected_count]
                 
             return genders
-            
         except Exception as e:
-            print(f"   [!] AI Gender Analysis failed: {e}. Retrying in {delay}s...", flush=True)
             time.sleep(delay)
             
     return ["unknown"] * len(dialogue_texts)
@@ -212,10 +140,7 @@ def extract_dialogue_and_gender(target_text: str, context_text: str) -> List[Dic
         is_quote = (part.startswith('“') and part.endswith('”')) or \
                    (part.startswith('"') and part.endswith('"'))
         
-        segment = {
-            "text": part,
-            "type": "dialogue" if is_quote else "narrator"
-        }
+        segment = {"text": part, "type": "dialogue" if is_quote else "narrator"}
         
         if is_quote:
             dialogue_indices.append(len(segments))
@@ -241,30 +166,30 @@ def get_chunks_analysis(
     chapter_id: int, 
     session: Session = Depends(get_session)
 ):
-    output_file_path = os.path.abspath(f"public/storage/sound/{chapter_id}.mp3")
+    # [UPDATE] ตรวจหาไฟล์ .wav เท่านั้น ไม่ใช้ mp3 แล้ว
+    output_file_path = os.path.abspath(f"public/storage/sound/{chapter_id}.wav")
     if os.path.exists(output_file_path):
-        # print(f"{chapter_id}.mp3 is already exist", flush=True)
         return {
             "audio_status": "already_exists",
             "audio_file_path": output_file_path,
-            "message": f"{chapter_id}.mp3 is already exist"
+            "message": f"{chapter_id}.wav is already exist"
         }
     
     start_time = time.time()
-    print(f"start sound", flush=True)
-    print(f"[Time] Processing started at: {time.strftime('%X')}", flush=True)
+    print(f"\n[Time] Processing started at: {time.strftime('%X')}", flush=True)
+    
     statement = (
         select(chunkContent)
         .where(chunkContent.chapterId == chapter_id)
         .order_by(chunkContent.chunkNumber)
     )
-        
     chunks = session.exec(statement).all()
     if not chunks:
         raise HTTPException(status_code=404, detail="No chunks found")
+        
     total_chunks = len(chunks)
     all_chunks_data = {} 
-    required_speaker_types = set()
+    
     for index, chunk in enumerate(chunks):
         print(f"Analyze Chunk {chunk.chunkNumber}/{total_chunks}", flush=True)
         
@@ -276,81 +201,87 @@ def get_chunks_analysis(
         context_text_raw = " ".join([c.chunkDetail for c in context_chunks_list])
         context_text = re.sub(r'\s+', ' ', context_text_raw.replace('\n', ' ')).strip()
         
-        segments = []
         has_quotes = '"' in target_text or '“' in target_text or '”' in target_text
-        
         if not has_quotes:
             segments = [{"text": target_text, "type": "narrator"}]
         else:
             segments = extract_dialogue_and_gender(target_text, context_text)
         all_chunks_data[chunk.chunkNumber] = segments
-        for seg in segments:
-            required_speaker_types.add(seg["type"])
-    print(f"\n[Phase 2] Loading required TTS models", flush=True)
-    needed_model_keys = set()
-    for st in required_speaker_types:
-        mapped = TTS_MAPPING.get(st, 'male') 
-        needed_model_keys.add(mapped)
-    local_models, local_tokenizers = load_specific_models(needed_model_keys)
-    print(f"\n[Phase 3] Generating Audio...", flush=True)
+        
+    print(f"\n[Phase 2] Generating Audio via F5...", flush=True)
     analysis_result = {}
     combined_audio = AudioSegment.empty()
     gap_segment = AudioSegment.silent(duration=AUDIO_GAP_MS)
-    generated_segments_count = 0
     sorted_chunk_nums = sorted(all_chunks_data.keys())
+    
     for chunk_num in sorted_chunk_nums:
         segments = all_chunks_data[chunk_num]
         print(f"   [Audio] Generating Chunk {chunk_num}...", flush=True)
         chunk_audio_duration_ms = 0
+        
         for seg in segments:
             text_part = seg["text"]
             speaker_type = seg["type"]
             clean_text = text_part.replace('"', '').replace('“', '').replace('”', '')
-            audio_seg = generate_tts_with_loaded_models(
-                clean_text, speaker_type, local_models, local_tokenizers
-            )
             
-            if audio_seg:
+            audio_seg = _generate_via_f5_api(clean_text, speaker_type)
+            
+            # [FIX] เช็คให้ชัวร์ว่า F5 ส่งเสียงกลับมาจริงๆ
+            if audio_seg is not None:
                 segment_duration = len(audio_seg) + len(gap_segment)
                 chunk_audio_duration_ms += segment_duration
                 
                 combined_audio += audio_seg
                 combined_audio += gap_segment
-                generated_segments_count += 1
+            else:
+                print(f"      ⚠️ F5 สร้างเสียงประโยคนี้ไม่สำเร็จ ข้ามไป...", flush=True)
         
         analysis_result[str(chunk_num)] = {
             "segments": segments,
             "duration": chunk_audio_duration_ms / 1000.0
         }
-    print(f"\n[Cleanup] Unloading models to free RAM...", flush=True)
-    del local_models
-    del local_tokenizers
+        
+    print(f"\n[Cleanup] Cleaning up unused variables...", flush=True)
     gc.collect()
     
-    if len(combined_audio) > 0:
-        output_dir = os.path.abspath("public/storage/sound")
-        os.makedirs(output_dir, exist_ok=True)
-        output_filename = f"{chapter_id}.mp3"
-        output_file_path = os.path.join(output_dir, output_filename)
-        print(f"[+] Saving audio to: {output_file_path}", flush=True)
-        try:
-            combined_audio.export(output_file_path, format="mp3")
-            if os.path.exists(output_file_path):
-                analysis_result["audio_status"] = "success"
-                analysis_result["audio_file_path"] = output_file_path
-            else:
-                analysis_result["audio_status"] = "error_file_missing"
-        except Exception as e:
-            analysis_result["audio_status"] = f"error_exporting: {str(e)}"
-    else:
-        analysis_result["audio_status"] = "no_audio_generated"
+    # [FIX] ดักจับการพัง 100% ถ้าไม่มีเสียงถูกเอามาต่อกันเลย ให้ยกเลิกการทำงานทั้งหมดทันที!
+    if len(combined_audio) == 0:
+        print("\n❌ ❌ [ERROR] F5 API ล้มเหลวทั้งหมด ไม่สามารถสร้างไฟล์เสียงได้ ยกเลิกการเซฟลง DB!", flush=True)
+        raise HTTPException(status_code=500, detail="ไม่สามารถสร้างเสียงจาก F5 ได้เลย (โปรดเช็ค F5 API)")
+
+    # [UPDATE] เซฟไฟล์เป็น .wav เพียงไฟล์เดียว
+    output_dir = os.path.abspath("public/storage/sound")
+    os.makedirs(output_dir, exist_ok=True)
+    output_filename = f"{chapter_id}.wav"
+    output_file_path = os.path.join(output_dir, output_filename)
+    
+    print(f"[+] Saving audio to: {output_file_path}", flush=True)
+    try:
+        combined_audio.export(output_file_path, format="wav")
+        analysis_result["audio_status"] = "success"
+        analysis_result["audio_file_path"] = output_file_path
+    except Exception as e:
+        analysis_result["audio_status"] = f"error_exporting: {str(e)}"
+        
     chunk_id_map = {str(c.chunkNumber): c.id for c in chunks}
 
     try:
+        old_matchers = session.exec(select(matcher).where(matcher.chapterId == chapter_id)).all()
+        if old_matchers:
+            for old_m in old_matchers:
+                session.delete(old_m)
+            session.commit()
+            print(f"[Database] 🗑️ ลบ Matcher เก่า {len(old_matchers)} รายการ", flush=True)
+    except Exception as e:
+        session.rollback()
+        print(f"[Database Error] Failed to delete old matchers: {e}", flush=True)
+
+    try:
         for chunk_num_str, data in analysis_result.items():
-            if chunk_num_str in ["audio_status", "audio_file_path", "total_processing_time_seconds"]: 
-                continue
-            if isinstance(data, dict) and "duration" in data:
+            if chunk_num_str in ["audio_status", "audio_file_path"]: continue
+            
+            # [FIX] ถ้า Chunk นี้เจนเสียงไม่ผ่าน (เวลาเป็น 0) จะไม่เซฟลง Database 
+            if isinstance(data, dict) and "duration" in data and data["duration"] > 0:
                 chunk_id = chunk_id_map.get(chunk_num_str)
                 print(f"Chunk {chunk_num_str}: {data['duration']}s | mapped chunkContentId: {chunk_id}", flush=True)
                 new_matcher = matcher(
@@ -366,10 +297,10 @@ def get_chunks_analysis(
     except Exception as e:
         session.rollback()
         print(f"[Database Error] Failed to insert matcher: {e}", flush=True)
+        
     end_time = time.time()
-    total_duration = end_time - start_time
-    print(f"Total processing time: {total_duration:.2f} seconds", flush=True)
-    analysis_result["total_processing_time_seconds"] = total_duration
+    analysis_result["total_processing_time_seconds"] = end_time - start_time
+    print(f"Total processing time: {analysis_result['total_processing_time_seconds']:.2f} seconds", flush=True)
 
     return analysis_result
 

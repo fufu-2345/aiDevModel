@@ -161,13 +161,12 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                     f"(multiple people:1.4), (extra person:1.2), (couple:1.2), (shadows:1.3), "
                     f"harsh lighting, black border, (vignetting), (frame), hands on face, "
                     f"(A-pose:1.3), T-pose, rigid pose, arms outstretched, deformed, blurry, "
-                    f"generate_images_for_missing_refpathslow quality, nsfw, holding object, "
+                    f"low quality, nsfw, holding object, "
                     f"weapon, extra limbs, signature"
                 )
                 
                 print(f"Generating Character: {char_obj.name}...")
                 
-                # ทำการ Generate ภาพ
                 pipeline_output = pipeline(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
@@ -177,13 +176,10 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                     guidance_scale=7.0
                 )
                 
-                # print(pipeline_output)
                 generated_images = pipeline_output.images
                 if isinstance(generated_images, list):
-                    # print("cccc")
                     single_image = generated_images[0]
                 else:
-                    print("something wrong")
                     single_image = generated_images.images
                 
                 if single_image.mode != "RGB":
@@ -226,7 +222,6 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                 )
                 print(f"Generating Item: {ent_obj.name}...")
                 
-                # ทำการ Generate ภาพ
                 pipeline_output = pipeline(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
@@ -235,14 +230,11 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                     width=1024,
                     guidance_scale=7.0
                 )
-                # print("item:")
-                # print(pipeline_output)
+                
                 generated_images = pipeline_output.images
                 if isinstance(generated_images, list):
-                    print("aaaaaaa")
                     single_image = generated_images[0]
                 else:
-                    print("something wrong")
                     single_image = generated_images.images
                 
                 if single_image.mode != "RGB":
@@ -261,7 +253,6 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
                 print(f"❌ Error generating item {ent_obj.name}: {e}")
                 
     finally:
-        # Cleanup Memory
         print("🧹 Cleaning up model from memory...")
         if pipeline:
             del pipeline
@@ -286,7 +277,7 @@ async def translate_text(text: str) -> str:
 
 async def create_and_save_chunks(session: Session, chapter: chapterContent):
     """
-    แบ่ง Chunk -> แปลภาษา -> Save ลง DB -> Return English Chunks
+    แบ่ง Chunk แบบ Dynamic Quote Tracking -> แปลภาษา -> Save ลง DB -> Return English Chunks
     """
     print(f"Creating chunks for Chapter {chapter.id}...")
     
@@ -296,55 +287,69 @@ async def create_and_save_chunks(session: Session, chapter: chapterContent):
     session.commit()
 
     lines = chapter.chapterDetail.split('\n')
-    total_lines = len(lines)
     
-    step = CHUNK_SIZE - CHUNK_OVERLAP
-    
+    base_chunks = []
+    current_chunk = []
+    inside_quote = False
+
+    # 1. ลูปแบ่ง Chunk โดยเช็คเครื่องหมายคำพูด (")
+    for line in lines:
+        has_quote = '"' in line
+        quote_count = line.count('"')
+
+        # กฎข้อ 1: ถ้าเจอ " และไม่อยู่ใน Quote ให้ตัดจบ Chunk เดิมทันที (เริ่ม Chunk ใหม่ด้วยบรรทัดนี้)
+        if not inside_quote and has_quote and len(current_chunk) > 0:
+            base_chunks.append(current_chunk)
+            current_chunk = []
+
+        # เก็บประโยคลง Chunk ปัจจุบัน
+        current_chunk.append(line)
+
+        # อัปเดตสถานะการอยู่ในเครื่องหมายคำพูด (ถ้ามี " เป็นจำนวนคี่ จะสลับสถานะ)
+        if quote_count % 2 != 0:
+            inside_quote = not inside_quote
+
+        # กฎข้อ 2: ถ้าไม่อยู่ใน Quote และยาวถึง CHUNK_SIZE แล้ว ให้ปิด Chunk 
+        # (หมายความว่าถ้า inside_quote = True มันจะไม่เข้ามาปิด Chunk จนกว่าจะเจอ " ปิดประโยค)
+        if not inside_quote and len(current_chunk) >= CHUNK_SIZE:
+            base_chunks.append(current_chunk)
+            current_chunk = []
+
+    # เก็บตกบรรทัดสุดท้ายที่ยังไม่ถูกปิด Chunk
+    if current_chunk:
+        base_chunks.append(current_chunk)
+
     raw_chunks_data = [] 
     
-    if total_lines <= CHUNK_SIZE:
-        raw_chunks_data.append((chapter.chapterDetail, chapter.chapterDetail))
-    else: 
-        for i in range(0, total_lines, step):
-            # 1. ส่วน Overlap (สำหรับ AI)
-            chunk_lines_overlap = lines[i : i + CHUNK_SIZE]
-            if len(chunk_lines_overlap) < 3 and len(raw_chunks_data) > 0:
-                break 
-            text_overlap = "\n".join(chunk_lines_overlap)
+    # 2. นำ Base Chunks มาประกอบร่างสร้าง Overlap เพื่อเตรียมส่งแปลและเซฟ
+    for i, chunk_lines in enumerate(base_chunks):
+        # ส่วนที่ไม่มี Overlap (สำหรับเซฟลง Database จะได้ไม่ซ้ำซ้อนกัน)
+        thai_no_overlap = "\n".join(chunk_lines)
+
+        # ส่วนที่มี Overlap (ดึงบรรทัดแรกของ Chunk ถัดไปมาประกอบ)
+        overlap_lines = chunk_lines.copy()
+        if i + 1 < len(base_chunks):
+            overlap_lines.extend(base_chunks[i+1][:CHUNK_OVERLAP])
             
-            # 2. ส่วน No Overlap (สำหรับ DB)
-            next_start_idx = i + step
-            is_last_chunk = False
-            if next_start_idx >= total_lines:
-                is_last_chunk = True
-            else:
-                next_chunk_lines = lines[next_start_idx : next_start_idx + CHUNK_SIZE]
-                if len(next_chunk_lines) < 3: 
-                    is_last_chunk = True
-            
-            if is_last_chunk:
-                chunk_lines_no_overlap = lines[i:]
-            else:
-                chunk_lines_no_overlap = lines[i : i + step]
-            
-            text_no_overlap = "\n".join(chunk_lines_no_overlap)
-            raw_chunks_data.append((text_no_overlap, text_overlap))
+        thai_overlap = "\n".join(overlap_lines)
+        raw_chunks_data.append((thai_no_overlap, thai_overlap))
 
     print(f"Processing Chapter {chapter.id}: Found {len(raw_chunks_data)} chunks.")
 
     final_eng_chunks = []
     
+    # 3. ส่งแปลและเซฟลงฐานข้อมูล
     for idx, (thai_no_overlap, thai_overlap) in enumerate(raw_chunks_data):
         print(f"Processing chunk {idx+1}/{len(raw_chunks_data)}...")
 
-        # แปลเฉพาะส่วนที่มี Overlap
+        # แปลเฉพาะส่วนที่มี Overlap (ส่งให้โมเดล AI อ่านจะได้มี Context)
         eng_text = await translate_text(thai_overlap)
         final_eng_chunks.append(eng_text)
         
         new_chunk = chunkContent(
             chunkNumber = idx + 1,
-            chunkDetail = thai_no_overlap,  # No Overlap
-            chunkDetailEng = eng_text,      # With Overlap
+            chunkDetail = thai_no_overlap,  # เซฟแบบ No Overlap ลง DB
+            chunkDetailEng = eng_text,      # เซฟแบบ Overlap ให้เป็น English
             picRef = None,           
             chapterId = chapter.id
         )

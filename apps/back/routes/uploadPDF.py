@@ -23,7 +23,7 @@ router = APIRouter(
 
 translator = Translator()
 ollamaURL = "http://localhost:11434/api/generate"
-stabilityModel = "C:\\stability matrix\\Data\\Models\\StableDiffusion\\juggernautXL_ragnarokBy.safetensors"
+stabilityModel = r"D:\StabilityMatrixAI\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
 extractModel = "gemma3:12b"
 
 def clearASCII(text: str) -> str:

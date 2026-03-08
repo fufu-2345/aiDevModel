@@ -72,23 +72,43 @@ const LogoutIcon = ({ className }: { className?: string }) => (
 export const formatNovelText = (text: string) => {
   if (!text) return null;
 
-  const paragraphs = text.split("\n");
+  // 1. จัดการเครื่องหมายคำพูดใน "ข้อความทั้งหมด" ก่อน เพื่อรองรับประโยคที่ยาวข้ามบรรทัด
+  let globalText = text
+    .replace(/"([^"]*)"/g, '“$1”')
+    .replace(/'([^']*)'/g, '‘$1’');
+
+  // 2. ไฮไลต์ตัวเลขและเครื่องหมายตกใจ (ย้ายมาทำก่อน เพื่อไม่ให้ \d+ จับโดนตัวเลข 200 ในคลาส text-amber-200)
+  globalText = globalText
+    .replace(/(\d+)/g, '<span class="text-sky-300">$1</span>')
+    .replace(/(!+)/g, '<span class="text-orange-400 font-bold text-2xl">$1</span>');
+
+  // 3. ไฮไลต์ Quote และจัดการ HTML Tag ไม่ให้พังเวลาโดนหั่นด้วย \n
+  globalText = globalText.replace(/“([^“”]*)”/g, (match, innerText) => {
+    const spanOpen = '<span class="text-amber-200 font-medium break-words">';
+    const spanClose = '</span>';
+    // ถ้าใน Quote มีการขึ้นบรรทัดใหม่ (\n) ให้ปิด span แล้วเปิดใหม่ เพื่อให้แยก paragraph ได้สมบูรณ์
+    const safeInner = innerText.replace(/\n/g, `${spanClose}\n${spanOpen}`);
+    return `${spanOpen}“${safeInner}”${spanClose}`;
+  });
+
+  globalText = globalText.replace(/‘([^‘’]*)’/g, (match, innerText) => {
+    const spanOpen = '<span class="text-slate-400 break-words">';
+    const spanClose = '</span>';
+    const safeInner = innerText.replace(/\n/g, `${spanClose}\n${spanOpen}`);
+    return `${spanOpen}‘${safeInner}’${spanClose}`;
+  });
+
+  // 4. หลังจากแทนที่สีต่างๆ เสร็จแล้ว ค่อยนำมาหั่นเป็น paragraph
+  const paragraphs = globalText.split("\n");
   let isFirstParagraph = true;
+
   return paragraphs.map((paragraph, index) => {
     const trimmedText = paragraph.trim();
     if (!trimmedText) return <div key={index} className="h-4" />;
-    let processedText = trimmedText
-      .replace(/(\d+)/g, '<span class="text-sky-300">$1</span>')
-      .replace(
-        /“([^“”]+)”/g,
-        '<span class="text-amber-200 font-medium">“$1”</span>',
-      )
-      .replace(/‘([^‘’]+)’/g, '<span class="text-slate-400">‘$1’</span>')
-      .replace(
-        /(!|!!|!!!)/g,
-        '<span class="text-orange-400 font-bold text-2xl">$1</span>',
-      );
 
+    let processedText = trimmedText;
+
+    // ทำตัวอักษรแรก (Drop Cap)
     if (isFirstParagraph) {
       isFirstParagraph = false;
       processedText = processedText.replace(

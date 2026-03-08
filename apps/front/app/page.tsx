@@ -204,7 +204,7 @@ export default function AuthPage() {
       `}
       >
         <div className="mb-12">
-          <h1 className="text-6xl font-bold tracking-wide drop-shadow-[0_0_15px_rgba(244,114,182,0.6)] text-transparent bg-clip-text bg-gradient-to-br from-pink-200 via-pink-300 to-pink-400 py-2 leading-tight">
+          <h1 className="text-6xl font-bold tracking-wide drop-shadow-[0_0_15px_rgba(194,194,194,0.6)] text-transparent bg-clip-text bg-gradient-to-br from-gray-400 via-gray-300 to-gray-400 py-2 leading-tight">
             {isLogin ? "Log in" : "Sign Up"}
           </h1>
         </div>
@@ -217,7 +217,7 @@ export default function AuthPage() {
               value={formData.email}
               onChange={handleInputChange}
               placeholder="Email Address"
-              className="w-full bg-transparent border-b border-gray-400 py-2 pr-8 text-white placeholder-gray-400 focus:outline-none focus:border-pink-300 transition-colors duration-300"
+              className="w-full bg-transparent border-b border-gray-400 py-2 pr-8 text-white placeholder-gray-400 focus:outline-none focus:border-gray-300 transition-colors duration-300"
               required
             />
 
@@ -229,7 +229,7 @@ export default function AuthPage() {
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
-              className="absolute right-0 top-2 text-gray-400 w-5 h-5 group-focus-within:text-pink-300 transition-colors"
+              className="absolute right-0 top-2 text-gray-400 w-5 h-5 group-focus-within:text-gray-300 transition-colors"
             >
               <rect width="20" height="16" x="2" y="4" rx="2" />
               <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
@@ -249,7 +249,7 @@ export default function AuthPage() {
                 strokeWidth="2"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                className="absolute right-0 top-2 text-gray-400 w-5 h-5 group-focus-within:text-pink-300 transition-colors"
+                className="absolute right-0 top-2 text-gray-400 w-5 h-5 group-focus-within:text-gray-300 transition-colors"
               >
                 <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
                 <circle cx="12" cy="7" r="4" />
@@ -267,7 +267,7 @@ export default function AuthPage() {
               value={formData.password}
               onChange={handleInputChange}
               placeholder="Password"
-              className="w-full bg-transparent border-b border-gray-400 py-2 pr-8 text-white placeholder-gray-400 focus:outline-none focus:border-pink-300 transition-colors duration-300"
+              className="w-full bg-transparent border-b border-gray-400 py-2 pr-8 text-white placeholder-gray-400 focus:outline-none focus:border-gray-300 transition-colors duration-300"
               required
             />
             <svg
@@ -278,7 +278,7 @@ export default function AuthPage() {
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
-              className="absolute right-0 top-2 text-gray-400 w-5 h-5 group-focus-within:text-pink-300 transition-colors"
+              className="absolute right-0 top-2 text-gray-400 w-5 h-5 group-focus-within:text-gray-300 transition-colors"
             >
               <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
               <path d="M7 11V7a5 5 0 0 1 10 0v4" />
@@ -296,7 +296,7 @@ export default function AuthPage() {
                 value={formData.confirmPassword}
                 onChange={handleInputChange}
                 placeholder="Confirm Password"
-                className="w-full bg-transparent border-b border-gray-400 py-2 pr-8 text-white placeholder-gray-400 focus:outline-none focus:border-pink-300 transition-colors duration-300"
+                className="w-full bg-transparent border-b border-gray-400 py-2 pr-8 text-white placeholder-gray-400 focus:outline-none focus:border-gray-300 transition-colors duration-300"
                 required={!isLogin}
               />
               <svg
@@ -307,7 +307,7 @@ export default function AuthPage() {
                 strokeWidth="2"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                className="absolute right-0 top-2 text-gray-400 w-5 h-5 group-focus-within:text-pink-300 transition-colors"
+                className="absolute right-0 top-2 text-gray-400 w-5 h-5 group-focus-within:text-gray-300 transition-colors"
               >
                 <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
                 <path d="M7 11V7a5 5 0 0 1 10 0v4" />
@@ -351,7 +351,7 @@ export default function AuthPage() {
                 Don't have an account?{" "}
                 <button
                   onClick={toggleForm}
-                  className="text-gray-300 hover:text-pink-200 underline underline-offset-4 transition-colors font-medium"
+                  className="text-gray-300 hover:text-gray-200 underline underline-offset-4 transition-colors font-medium"
                 >
                   Sign up now
                 </button>
@@ -361,7 +361,7 @@ export default function AuthPage() {
                 Have an account?{" "}
                 <button
                   onClick={toggleForm}
-                  className="text-gray-300 hover:text-pink-200 underline underline-offset-4 transition-colors font-medium"
+                  className="text-gray-300 hover:text-gray-200 underline underline-offset-4 transition-colors font-medium"
                 >
                   Sign in here
                 </button>

@@ -21,7 +21,7 @@ IMG_HEIGHT = 720
 
 ollamaURL = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api/generate")
 ollamaModel = os.getenv("OLLAMA_MODEL", "gemma3:12b")
-stabilityModel = "C:\\stability matrix\\Data\\Models\\StableDiffusion\\juggernautXL_ragnarokBy.safetensors"
+stabilityModel = r"D:\StabilityMatrixAI\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
 
 def flush_memory():
     gc.collect()

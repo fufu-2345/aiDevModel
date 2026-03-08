@@ -1,15 +1,9 @@
 import os
 
-# --- HOTFIX: ป้องกัน Error Environment Variables หาย (ทั้ง PyTorch และ cached_path) ---
-# 1. จำลอง Username ให้ PyTorch
 if "USERNAME" not in os.environ and "USER" not in os.environ:
     os.environ["USERNAME"] = "local_user"
-
-# 2. จำลองโฟลเดอร์ Home ให้ไลบรารี cached_path และ pathlib
 fake_home = os.path.abspath(".home_fake")
-os.makedirs(fake_home, exist_ok=True) # สร้างโฟลเดอร์หลอกๆ ไว้ในโปรเจกต์
-
-# แยกเช็คและตั้งค่าทีละตัวแปร เพื่อป้องกันกรณีที่บางตัวแปรมีอยู่แล้วแต่บางตัวหายไป
+os.makedirs(fake_home, exist_ok=True)
 if "USERPROFILE" not in os.environ or not os.environ["USERPROFILE"]:
     os.environ["USERPROFILE"] = fake_home
 if "HOME" not in os.environ or not os.environ["HOME"]:
@@ -18,6 +12,7 @@ if "HOMEDRIVE" not in os.environ:
     os.environ["HOMEDRIVE"] = fake_home[:2] if len(fake_home) >= 2 else "C:"
 if "HOMEPATH" not in os.environ:
     os.environ["HOMEPATH"] = fake_home[2:] if len(fake_home) >= 2 else fake_home
+    
 # ---------------------------------------------------------------------------------
 
 from fastapi import FastAPI, HTTPException, Depends
@@ -61,67 +56,18 @@ app.add_middleware(
 
 ollamaURL = "http://localhost:11434/api/generate"
 extractModel = "gemma3:12b"
-stabilityModel = "C:\\stability matrix\\Data\\Models\\StableDiffusion\\juggernautXL_ragnarokBy.safetensors"
-# stabilityModel2 ="C:\\stability matrix\\Data\\Models\\StableDiffusion\\revAnimated_v2Rebirth.safetensors"
-# lora = r"C:\stability matrix\Data\Models\Lora\Wuxia-PONY-PAseer.safetensors"
+stabilityModel = r"D:\StabilityMatrixAI\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
 app.mount("/static/public", StaticFiles(directory="public"), name="static")
 
-IMG_WIDTH = 1280
-IMG_HEIGHT = 720
-IP_ADAPTER_REPO = "h94/IP-Adapter" 
-IP_ADAPTER_SUBFOLDER = "sdxl_models" 
-IP_ADAPTER_FILENAME = "ip-adapter-plus-face_sdxl_vit-h.bin"
-
-from routes import movies, uploadPDF, createPic, extract, sound, matcher, auth#, F5TTS
+from routes import movies, uploadPDF, createPIC, extract, sound, matcher, auth#, F5TTS
 app.include_router(movies.router)
 app.include_router(uploadPDF.router)
-app.include_router(createPic.router)
+app.include_router(createPIC.router)
 app.include_router(extract.router)
 app.include_router(sound.router)
 app.include_router(matcher.router)
 app.include_router(auth.router)
 # app.include_router(F5TTS.router)
-
-def load_image_pipe():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    torch_dtype = torch.float16 if device == "cuda" else torch.float32
-    
-    is_xl = "xl" in stabilityModel.lower()
-    is_safetensors = stabilityModel.endswith(".safetensors")
-    PipelineClass = StableDiffusionXLPipeline if is_xl else StableDiffusionPipeline
-    
-    common_args = {
-        "torch_dtype": torch_dtype,
-        "low_cpu_mem_usage": True,
-    }
-    if is_safetensors:
-        pipe = PipelineClass.from_single_file(
-            stabilityModel,
-            **common_args
-        )
-    else:
-        pipe = PipelineClass.from_pretrained(
-            stabilityModel,
-            variant="fp16" if device == "cuda" else None,
-            **common_args
-        )
-    if hasattr(pipe, "safety_checker"):
-        pipe.safety_checker = None
-    if hasattr(pipe, "requires_safety_checker"):
-        pipe.requires_safety_checker = False
-    if hasattr(pipe, "watermarker"):
-        pipe.watermarker = None
-    pipe.to(device, dtype=torch_dtype) 
-    
-    # if os.path.exists(loraPath):
-    #     print(f"Loading LoRA: {loraPath}")
-    #     pipe.load_lora_weights(loraPath)
-        
-    return pipe
-
-#---------------------------------------
-#---------------------------------------
-#---------------------------------------
 
 async def generate_image_from_text(prompt: str) -> str:
     try:
