@@ -291,61 +291,36 @@ async def create_and_save_chunks(session: Session, chapter: chapterContent):
     base_chunks = []
     current_chunk = []
     inside_quote = False
-
-    # 1. ลูปแบ่ง Chunk โดยเช็คเครื่องหมายคำพูด (")
+    
     for line in lines:
         has_quote = '"' in line
         quote_count = line.count('"')
 
-        # กฎข้อ 1: ถ้าเจอ " และไม่อยู่ใน Quote ให้ตัดจบ Chunk เดิมทันที (เริ่ม Chunk ใหม่ด้วยบรรทัดนี้)
         if not inside_quote and has_quote and len(current_chunk) > 0:
             base_chunks.append(current_chunk)
             current_chunk = []
-
-        # เก็บประโยคลง Chunk ปัจจุบัน
         current_chunk.append(line)
-
-        # อัปเดตสถานะการอยู่ในเครื่องหมายคำพูด (ถ้ามี " เป็นจำนวนคี่ จะสลับสถานะ)
         if quote_count % 2 != 0:
             inside_quote = not inside_quote
-
-        # กฎข้อ 2: ถ้าไม่อยู่ใน Quote และยาวถึง CHUNK_SIZE แล้ว ให้ปิด Chunk 
-        # (หมายความว่าถ้า inside_quote = True มันจะไม่เข้ามาปิด Chunk จนกว่าจะเจอ " ปิดประโยค)
         if not inside_quote and len(current_chunk) >= CHUNK_SIZE:
             base_chunks.append(current_chunk)
             current_chunk = []
-
-    # เก็บตกบรรทัดสุดท้ายที่ยังไม่ถูกปิด Chunk
     if current_chunk:
         base_chunks.append(current_chunk)
-
     raw_chunks_data = [] 
-    
-    # 2. นำ Base Chunks มาประกอบร่างสร้าง Overlap เพื่อเตรียมส่งแปลและเซฟ
     for i, chunk_lines in enumerate(base_chunks):
-        # ส่วนที่ไม่มี Overlap (สำหรับเซฟลง Database จะได้ไม่ซ้ำซ้อนกัน)
         thai_no_overlap = "\n".join(chunk_lines)
-
-        # ส่วนที่มี Overlap (ดึงบรรทัดแรกของ Chunk ถัดไปมาประกอบ)
         overlap_lines = chunk_lines.copy()
         if i + 1 < len(base_chunks):
             overlap_lines.extend(base_chunks[i+1][:CHUNK_OVERLAP])
-            
         thai_overlap = "\n".join(overlap_lines)
         raw_chunks_data.append((thai_no_overlap, thai_overlap))
-
     print(f"Processing Chapter {chapter.id}: Found {len(raw_chunks_data)} chunks.")
-
     final_eng_chunks = []
-    
-    # 3. ส่งแปลและเซฟลงฐานข้อมูล
     for idx, (thai_no_overlap, thai_overlap) in enumerate(raw_chunks_data):
         print(f"Processing chunk {idx+1}/{len(raw_chunks_data)}...")
-
-        # แปลเฉพาะส่วนที่มี Overlap (ส่งให้โมเดล AI อ่านจะได้มี Context)
         eng_text = await translate_text(thai_overlap)
         final_eng_chunks.append(eng_text)
-        
         new_chunk = chunkContent(
             chunkNumber = idx + 1,
             chunkDetail = thai_no_overlap,  # เซฟแบบ No Overlap ลง DB
@@ -355,9 +330,7 @@ async def create_and_save_chunks(session: Session, chapter: chapterContent):
         )
         session.add(new_chunk)
         await asyncio.sleep(0.5) 
-
     session.commit()
-    print("✅ Chunks translated and saved to DB.")
     return final_eng_chunks
 
 async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel: str):

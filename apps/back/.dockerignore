@@ -1,0 +1,14 @@
+__pycache__
+.venv/*
+~/*
+public/storage/characters/*
+public/storage/entities/*
+public/storage/pic/*
+public/storage/sound/*
+public/storage/vdo/*
+ipAdapter/*
+output_audio/*
+*.mp3
+*.wav
+.home_fake/*
+.cache/*

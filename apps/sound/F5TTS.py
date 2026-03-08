@@ -16,14 +16,12 @@ task_queue = queue.Queue()
 cuda_lock = threading.Lock()
 results_dict = {}
 
-# ฟังก์ชันสำหรับลบไฟล์หลังจากส่งให้ Main API เสร็จแล้ว
 def cleanup_temp_file(filepath: str):
     try:
         if os.path.exists(filepath):
             os.remove(filepath)
-            print(f"🧹 [Cleanup] ลบไฟล์ชั่วคราวเรียบร้อย: {filepath}", flush=True)
     except Exception as e:
-        print(f"⚠️ [Cleanup] ลบไฟล์ไม่สำเร็จ: {e}", flush=True)
+        print(f"err: {e}", flush=True)
 
 def run_f5_tts_th(text, ref_audio_path, ref_text, out_wav_path, result_queue, user_home):
     try:
@@ -42,16 +40,13 @@ def run_f5_tts_th(text, ref_audio_path, ref_text, out_wav_path, result_queue, us
         tts = TTS()
         infer_result = tts.infer(ref_audio=ref_audio_path, ref_text=ref_text, gen_text=text)
         
-        # [FIX] ระบบตรวจจับข้อมูลเสียงและ Sample Rate แบบยืดหยุ่น ป้องกันโมเดลส่งค่ากลับมาสลับตำแหน่ง
         if isinstance(infer_result, (tuple, list)) and len(infer_result) >= 2:
             res0 = infer_result[0]
             res1 = infer_result[1]
             
-            # เช็คว่าถ้า index 0 เป็นตัวเลขหลักหมื่น (Sample Rate) ให้เอาข้อมูลเสียงจาก index 1
             if isinstance(res0, (int, float, np.integer, np.floating)) and res0 >= 8000:
                 sr = int(res0)
                 raw_wav = res1
-            # ถ้าเป็นรูปแบบปกติ index 1 คือ Sample Rate
             elif isinstance(res1, (int, float, np.integer, np.floating)) and res1 >= 8000:
                 raw_wav = res0
                 sr = int(res1)
@@ -92,21 +87,13 @@ def run_f5_tts_th(text, ref_audio_path, ref_text, out_wav_path, result_queue, us
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
-        print(f"   [Debug-Worker] ❌ พบข้อผิดพลาดร้ายแรง:\n{error_trace}", flush=True)
         result_queue.put({"status": "error", "error": str(e)})
 
 def process_tts_task(task_id: str, text: str, ref_audio_path: str, ref_text: str, speaker_type: str):
     try:
-        print(f"\n==================================================", flush=True)
-        print(f"[Worker] 📥 กำลังประมวลผลคิว Task: {task_id}", flush=True)
-        print(f"         🗣️  Speaker Type : {speaker_type}", flush=True)
-        print(f"         📝 Text         : {text}", flush=True)
-        print(f"         🎧 Ref Audio    : {ref_audio_path}", flush=True)
-        print(f"==================================================", flush=True)
-        
         out_wav_path = f"worker_out_{task_id}.wav"
         final_out_path = f"final_{task_id}.wav"
-
+        
         with cuda_lock:
             current_home = os.environ.get("USERPROFILE") or os.environ.get("HOME") or os.path.expanduser("~")
             
@@ -117,7 +104,6 @@ def process_tts_task(task_id: str, text: str, ref_audio_path: str, ref_text: str
             )
             p.start()
             p.join() 
-            
             if not result_queue.empty():
                 res = result_queue.get()
                 if res["status"] == "error":
@@ -126,19 +112,14 @@ def process_tts_task(task_id: str, text: str, ref_audio_path: str, ref_text: str
             else:
                 results_dict[task_id] = {"status": "error", "error": "Worker process terminated unexpectedly."}
                 return
-
         if not os.path.exists(out_wav_path):
             results_dict[task_id] = {"status": "error", "error": "Output file not generated"}
             return
-
         shutil.move(out_wav_path, final_out_path)
-
-        print(f"[Worker] 🎉 Task: {task_id} เจนเสียงเสร็จแล้ว!", flush=True)
         results_dict[task_id] = {"status": "done", "file": final_out_path}
-
     except Exception as e:
         results_dict[task_id] = {"status": "error", "error": str(e)}
-
+        
 def worker_loop():
     while True:
         task = task_queue.get()
@@ -172,18 +153,15 @@ def generate_audio(
         }
     }
 
-    # [FIX] ล้างค่า String ให้สะอาดหมดจด ป้องกันการส่งค่ามามีช่องว่างหรือเคสแปลกๆ
     clean_stype = str(speaker_type).replace('"', '').replace("'", "").strip().lower() if speaker_type else "narrator"
     stype = clean_stype if clean_stype in default_refs else "male"
-
-    # [FIX] ตรวจสอบกรณีที่ FastAPI ได้รับข้อความคำว่า "None" (เป็น String) มาจาก Client
-    final_ref_audio = ref_audio_path if ref_audio_path and str(ref_audio_path).strip().lower() != "none" else default_refs[stype]["audio"]
-    final_ref_text = ref_text if ref_text and str(ref_text).strip().lower() != "none" else default_refs[stype]["text"]
+    
+    final_ref_audio = default_refs[stype]["audio"]
+    final_ref_text = default_refs[stype]["text"]
 
     task_id = str(uuid.uuid4())[:8]
     results_dict[task_id] = {"status": "pending"}
     
-    # [UPDATE] ส่ง stype ที่ผ่านการจับคู่และคัดกรองอย่างถูกต้องแล้วไปแสดงใน Log
     task_queue.put((task_id, text, final_ref_audio, final_ref_text, stype))
     
     timeout = 600

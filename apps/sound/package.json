@@ -1,0 +1,7 @@
+{
+  "name": "Sound",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": ".\\.venvF5\\Scripts\\python.exe -m uvicorn F5TTS:app --port 8001"
+  }
+}
