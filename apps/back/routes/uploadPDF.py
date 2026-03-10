@@ -15,7 +15,9 @@ import httpx
 import torch
 import asyncio
 from models import movieTitle, chapterContent, chunkContent, character, altCharacter, entity, altEntity
+from dotenv import load_dotenv
 
+load_dotenv()
 router = APIRouter(
     prefix="/uploadPDF",
     tags=["uploadPDF"]
@@ -23,7 +25,7 @@ router = APIRouter(
 
 translator = Translator()
 ollamaURL = "http://localhost:11434/api/generate"
-stabilityModel = r"D:\StabilityMatrixAI\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
+stabilityModel = os.getenv("STABILITY_MODEL_PATH")
 extractModel = "gemma3:12b"
 
 def clearASCII(text: str) -> str:
@@ -82,7 +84,7 @@ def clearNewline(text: str) -> str:
             return '\n'
         if ' \n' in found:
             return '\n'
-        return ' '
+        return ''
     pattern = r"[ ]*\n[ \n]*"
     return re.sub(pattern, replacer, text).strip()
 
@@ -260,12 +262,14 @@ def load_image_pipe():
     if is_safetensors:
             pipe = PipelineClass.from_single_file(
             stabilityModel,
+            local_files_only=True,
             use_safetensors=True,
             torch_dtype=torch_dtype
         )
     else:
         pipe = PipelineClass.from_pretrained(
             stabilityModel,
+            local_files_only=True,
             torch_dtype=torch_dtype,
             use_safetensors=True
         )

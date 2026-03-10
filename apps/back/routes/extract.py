@@ -12,19 +12,21 @@ from sqlmodel import Session, select
 from googletrans import Translator
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline 
 from rembg import remove 
-
+from dotenv import load_dotenv
 from database import get_session
 from models import chapterContent, character, entity, chunkContent 
 from services import save_extraction_result
+
+load_dotenv()
 
 router = APIRouter(
     prefix="/extractEntities",
     tags=["extractEntities"]
 )
 
-ollamaURL = "http://localhost:11434/api/generate"
+ollamaURL = os.getenv("OLLAMA_API_URL")
 extractModel = "gemma3:12b" 
-stabilityModel = "stabilityai/stable-diffusion-xl-base-1.0" 
+stabilityModel = os.getenv("STABILITY_MODEL_PATH")
 GENERATE_ENTITY_IMAGES = True 
 
 MAX_TAGS = 10
@@ -82,12 +84,14 @@ def load_image_pipe():
     if is_safetensors:
         pipe = PipelineClass.from_single_file(
             stabilityModel,
+            local_files_only=True,
             use_safetensors=True,
             torch_dtype=torch_dtype
         )
     else:
         pipe = PipelineClass.from_pretrained(
             stabilityModel,
+            local_files_only=True,
             torch_dtype=torch_dtype,
             use_safetensors=True
         )

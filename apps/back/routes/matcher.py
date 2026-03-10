@@ -14,7 +14,6 @@ router = APIRouter(
     tags=["matcher"]
 )
 
-# ฟังก์ชันเสริมสำหรับแกะข้อมูลชื่อไฟล์ตัวละคร (รองรับทั้งแบบ Array JSON และแบบคั่นด้วยลูกน้ำ)
 def parse_characters(char_data):
     if not char_data: return []
     char_str = str(char_data).strip()
@@ -51,12 +50,10 @@ def process_video_generation(chapter_id: int, session: Session):
         if not os.path.isfile(loc_path):
             continue
 
-        # ดึงรายชื่อตัวละครทั้งหมดและกรองเอาเฉพาะไฟล์ที่มีอยู่จริง + ตัดคนซ้ำออก
         char_files = parse_characters(m.character)
         valid_chars = []
         for cf in char_files:
             cp = os.path.join(IMAGE_BASE_DIR, cf)
-            # ถ้ามีไฟล์จริง และยังไม่เคยถูกเพิ่มลงไปในฉากนี้ (ป้องกันแฝด)
             if os.path.isfile(cp) and cp not in valid_chars:
                 valid_chars.append(cp)
 
@@ -73,7 +70,7 @@ def process_video_generation(chapter_id: int, session: Session):
             valid_matchers.append({
                 "data": m,
                 "loc": loc_path,
-                "chars": valid_chars,  # เก็บเป็น Array ของตัวละครที่พร้อมใช้งาน
+                "chars": valid_chars, 
                 "duration": current_dur
             })
 
@@ -86,7 +83,7 @@ def process_video_generation(chapter_id: int, session: Session):
     for i, item in enumerate(valid_matchers):
         m = item["data"]
         loc_path = item["loc"]
-        valid_chars = item["chars"][:3]  # จำกัดสูงสุดไม่เกิน 3 คน
+        valid_chars = item["chars"][:3] 
         base_duration = item["duration"]
 
         is_last_scene = (i == total_scenes - 1)
@@ -115,13 +112,12 @@ def process_video_generation(chapter_id: int, session: Session):
                 char = ImageClip(cp)
                 char_w, char_h = char.size
                 
-                # คำนวณตำแหน่งแกน X ตามจำนวนคน
                 if N == 1:
                     target_x = (bg_w - char_w) / 2
                 elif N == 2:
                     if idx == 0: target_x = (bg_w / 3) - (char_w / 2)
                     else: target_x = (bg_w * 2 / 3) - (char_w / 2)
-                else:  # N == 3
+                else:
                     if idx == 0: target_x = (bg_w / 4) - (char_w / 2)
                     elif idx == 1: target_x = (bg_w * 2 / 4) - (char_w / 2)
                     else: target_x = (bg_w * 3 / 4) - (char_w / 2)
@@ -129,7 +125,6 @@ def process_video_generation(chapter_id: int, session: Session):
                 end_y = (bg_h - char_h) / 2
                 start_y = -char_h
                 
-                # ใช้ closure function แบบผูกค่าตัวแปร (Factory) ป้องกันบั๊กตำแหน่งเพี้ยน
                 def make_char_pos(tx, sy, ey, anim_dur):
                     def char_pos(t):
                         if t <= anim_dur:
@@ -152,7 +147,7 @@ def process_video_generation(chapter_id: int, session: Session):
         scene_clips.append(scene)
         
     if not scene_clips:
-        print(f"Error: ไม่สามารถสร้าง Scene ได้เลยสำหรับ Chapter {chapter_id}")
+        print(f"Error: {chapter_id}")
         return
 
     final_video = concatenate_videoclips(scene_clips, method="compose")
@@ -161,7 +156,7 @@ def process_video_generation(chapter_id: int, session: Session):
     print(f"vdo len: {final_video.duration} sec")
     print(f"==================================================\n")
 
-    audio_path = f"public/storage/sound/{chapter_id}.mp3"
+    audio_path = f"public/storage/sound/{chapter_id}.wav"
     if os.path.exists(audio_path):
         audio = AudioFileClip(audio_path)
         max_audio_duration = final_video.duration - 1
@@ -174,7 +169,7 @@ def process_video_generation(chapter_id: int, session: Session):
             final_audio = CompositeAudioClip([audio]).with_duration(final_video.duration)
             final_video = final_video.with_audio(final_audio)
     else:
-        print(f"Warning: ไม่พบไฟล์เสียงที่ {audio_path}")
+        print(f"Warning: {audio_path} isnt found")
         
     os.makedirs("public/storage/vdo", exist_ok=True)
     temp_output_path = f"public/storage/vdo/{chapter_id}_temp.mp4"

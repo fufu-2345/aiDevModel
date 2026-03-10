@@ -15,13 +15,12 @@ except ImportError:
     psutil = None
 
 load_dotenv()
-
 IMG_WIDTH = 1280
 IMG_HEIGHT = 720
 
-ollamaURL = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api/generate")
-ollamaModel = os.getenv("OLLAMA_MODEL", "gemma3:12b")
-stabilityModel = r"D:\StabilityMatrixAI\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
+ollamaURL = os.getenv("OLLAMA_API_URL")
+ollamaModel = "gemma3:12b"
+stabilityModel = os.getenv("STABILITY_MODEL_PATH")
 
 def flush_memory():
     gc.collect()
@@ -114,9 +113,9 @@ class BGGenerator:
         print(f"Loading Background ({self.device})...")
         try:
             if stabilityModel.endswith(".safetensors"):
-                self.pipe = StableDiffusionXLPipeline.from_single_file(stabilityModel, torch_dtype=self.dtype, use_safetensors=True)
+                self.pipe = StableDiffusionXLPipeline.from_single_file(stabilityModel, torch_dtype=self.dtype, use_safetensors=True, local_files_only=True,)
             else:
-                self.pipe = StableDiffusionXLPipeline.from_pretrained(stabilityModel, torch_dtype=self.dtype)
+                self.pipe = StableDiffusionXLPipeline.from_pretrained(stabilityModel, torch_dtype=self.dtype, local_files_only=True)
         except Exception as e:
             print(f"   ⚠️ Load failed: {e}")
             return None
@@ -132,7 +131,7 @@ class BGGenerator:
             self.pipe.enable_vae_slicing()
         else:
             self.pipe.to(self.device)
-
+        print(self.pipe)
         return self.pipe
 
     def generate_bg(self, prompt, output_path):

@@ -33,6 +33,7 @@ import torch
 from googletrans import Translator
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 from services import save_extraction_result
+from dotenv import load_dotenv
 
 from database import create_db_and_tables, get_session
 from models import movieTitle, chapterContent, chunkContent, character, altCharacter, entity, altEntity
@@ -45,6 +46,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 translator = Translator()
+load_dotenv()
 
 app.add_middleware(
     CORSMiddleware,
@@ -56,7 +58,7 @@ app.add_middleware(
 
 ollamaURL = "http://localhost:11434/api/generate"
 extractModel = "gemma3:12b"
-stabilityModel = r"D:\StabilityMatrixAI\Data\Models\StableDiffusion\juggernautXL_ragnarokBy.safetensors"
+stabilityModel = os.getenv("STABILITY_MODEL_PATH")
 app.mount("/static/public", StaticFiles(directory="public"), name="static")
 
 from routes import movies, uploadPDF, createPIC, extract, sound, matcher, auth#, F5TTS
