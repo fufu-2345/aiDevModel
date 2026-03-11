@@ -24,9 +24,9 @@ router = APIRouter(
     tags=["extractEntities"]
 )
 
-ollamaURL = os.getenv("OLLAMA_API_URL")
+ollamaURL = os.getenv("ollamaURL")
 extractModel = "gemma3:12b" 
-stabilityModel = os.getenv("STABILITY_MODEL_PATH")
+stabilityModel = os.getenv("stabilityModel")
 GENERATE_ENTITY_IMAGES = True 
 
 MAX_TAGS = 10

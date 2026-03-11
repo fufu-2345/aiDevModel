@@ -14,13 +14,13 @@ try:
 except ImportError:
     psutil = None
 
-load_dotenv()
+load_dotenv(".env.local")
 IMG_WIDTH = 1280
 IMG_HEIGHT = 720
 
-ollamaURL = os.getenv("OLLAMA_API_URL")
-ollamaModel = "gemma3:12b"
-stabilityModel = os.getenv("STABILITY_MODEL_PATH")
+ollamaURL = os.getenv("ollamaURL")
+ollamaModel = "gemma3:12b"  
+stabilityModel = os.getenv("stabilityModel")
 
 def flush_memory():
     gc.collect()

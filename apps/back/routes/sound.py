@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 from pydub import AudioSegment
-
+from dotenv import load_dotenv
 from database import get_session
 from models import chunkContent, matcher
 
@@ -20,7 +20,9 @@ router = APIRouter(
     tags=["sound"]
 )
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+load_dotenv()
+
+ollamaURL = os.getenv("OLLAMA_API_URL")
 OLLAMA_MODEL = "gemma3:12b"
 F5_API_URL = "http://localhost:8001/internal/generate" 
 

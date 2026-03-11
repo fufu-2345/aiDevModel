@@ -11,7 +11,10 @@ from sqlmodel import Session, select, create_engine, SQLModel, Field
 import httpx
 from dotenv import load_dotenv 
 
-# Import Service
+load_dotenv()
+
+OLLAMA_MODEL = os.getenv("OLLAMA_API_URL")
+
 try:
     from .services.ai_engine import (
         analyze_script_content, 
@@ -43,7 +46,6 @@ try:
 except ImportError:
     print("Error: models.py not found.")
 
-# อัปเดต Model Matcher 
 class matcher(SQLModel, table=True):
     __table_args__ = {'extend_existing': True}
     id: Optional[int] = Field(default=None, primary_key=True)
