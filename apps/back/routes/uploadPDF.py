@@ -17,15 +17,15 @@ import asyncio
 from models import movieTitle, chapterContent, chunkContent, character, altCharacter, entity, altEntity
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(".env.local")
 router = APIRouter(
     prefix="/uploadPDF",
     tags=["uploadPDF"]
 )
 
 translator = Translator()
-ollamaURL = "http://localhost:11434/api/generate"
-stabilityModel = os.getenv("STABILITY_MODEL_PATH")
+ollamaURL = os.getenv("ollamaURL")
+stabilityModel = os.getenv("stabilityModel")
 extractModel = "gemma3:12b"
 
 def clearASCII(text: str) -> str:

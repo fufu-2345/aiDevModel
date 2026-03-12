@@ -72,21 +72,17 @@ const LogoutIcon = ({ className }: { className?: string }) => (
 export const formatNovelText = (text: string) => {
   if (!text) return null;
 
-  // 1. จัดการเครื่องหมายคำพูดใน "ข้อความทั้งหมด" ก่อน เพื่อรองรับประโยคที่ยาวข้ามบรรทัด
   let globalText = text
     .replace(/"([^"]*)"/g, '“$1”')
     .replace(/'([^']*)'/g, '‘$1’');
 
-  // 2. ไฮไลต์ตัวเลขและเครื่องหมายตกใจ (ย้ายมาทำก่อน เพื่อไม่ให้ \d+ จับโดนตัวเลข 200 ในคลาส text-amber-200)
   globalText = globalText
     .replace(/(\d+)/g, '<span class="text-sky-300">$1</span>')
     .replace(/(!+)/g, '<span class="text-orange-400 font-bold text-2xl">$1</span>');
 
-  // 3. ไฮไลต์ Quote และจัดการ HTML Tag ไม่ให้พังเวลาโดนหั่นด้วย \n
   globalText = globalText.replace(/“([^“”]*)”/g, (match, innerText) => {
     const spanOpen = '<span class="text-amber-200 font-medium break-words">';
     const spanClose = '</span>';
-    // ถ้าใน Quote มีการขึ้นบรรทัดใหม่ (\n) ให้ปิด span แล้วเปิดใหม่ เพื่อให้แยก paragraph ได้สมบูรณ์
     const safeInner = innerText.replace(/\n/g, `${spanClose}\n${spanOpen}`);
     return `${spanOpen}“${safeInner}”${spanClose}`;
   });
@@ -97,18 +93,12 @@ export const formatNovelText = (text: string) => {
     const safeInner = innerText.replace(/\n/g, `${spanClose}\n${spanOpen}`);
     return `${spanOpen}‘${safeInner}’${spanClose}`;
   });
-
-  // 4. หลังจากแทนที่สีต่างๆ เสร็จแล้ว ค่อยนำมาหั่นเป็น paragraph
   const paragraphs = globalText.split("\n");
   let isFirstParagraph = true;
-
   return paragraphs.map((paragraph, index) => {
     const trimmedText = paragraph.trim();
     if (!trimmedText) return <div key={index} className="h-4" />;
-
     let processedText = trimmedText;
-
-    // ทำตัวอักษรแรก (Drop Cap)
     if (isFirstParagraph) {
       isFirstParagraph = false;
       processedText = processedText.replace(
@@ -119,12 +109,45 @@ export const formatNovelText = (text: string) => {
         },
       );
     }
-
     return (
       <p
         key={index}
         className="mb-5 leading-[2.1] text-slate-200 tracking-wide font-light text-[1.15rem] text-justify indent-[2.5rem] first-of-type:indent-0 sm:indent-[1.5rem] sm:text-[1.05rem]"
         dangerouslySetInnerHTML={{ __html: processedText }}
+      />
+    );
+  });
+};
+
+export const formatNovelText2 = (text: string) => {
+  if (!text) return null;
+  let globalText = text
+    .replace(/"([^"]*)"/g, '“$1”')
+    .replace(/'([^']*)'/g, '‘$1’');
+  globalText = globalText
+    .replace(/(\d+)/g, '<span class="text-sky-300">$1</span>')
+    .replace(/(!+)/g, '<span class="text-orange-400 font-bold text-2xl">$1</span>');
+  globalText = globalText.replace(/“([^“”]*)”/g, (match, innerText) => {
+    const spanOpen = '<span class="text-amber-200 font-medium break-words">';
+    const spanClose = '</span>';
+    const safeInner = innerText.replace(/\n/g, `${spanClose}\n${spanOpen}`);
+    return `${spanOpen}“${safeInner}”${spanClose}`;
+  });
+  globalText = globalText.replace(/‘([^‘’]*)’/g, (match, innerText) => {
+    const spanOpen = '<span class="text-slate-400 break-words">';
+    const spanClose = '</span>';
+    const safeInner = innerText.replace(/\n/g, `${spanClose}\n${spanOpen}`);
+    return `${spanOpen}‘${safeInner}’${spanClose}`;
+  });
+  const paragraphs = globalText.split("\n");
+  return paragraphs.map((paragraph, index) => {
+    const trimmedText = paragraph.trim();
+    if (!trimmedText) return <div key={index} className="h-4" />;
+    return (
+      <p
+        key={index}
+        className="mb-5 leading-[2.1] text-slate-200 tracking-wide font-light text-[1.15rem] text-justify indent-[2.5rem] first-of-type:indent-0 sm:indent-[1.5rem] sm:text-[1.05rem]"
+        dangerouslySetInnerHTML={{ __html: trimmedText }}
       />
     );
   });
@@ -408,9 +431,9 @@ export default function ChapterReaderPage({
                         )}
 
                         {chunk.text && (
-                          <p className="text-lg md:text-xl leading-relaxed whitespace-pre-wrap text-white/90 font-serif">
-                            {chunk.text}
-                          </p>
+                          <div className="text-lg md:text-xl leading-relaxed whitespace-pre-wrap text-white/90 font-serif">
+                            {formatNovelText2(chunk.text)}
+                          </div>
                         )}
                       </div>
                     ))}

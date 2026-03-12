@@ -11,7 +11,7 @@ from sqlmodel import Session, select, create_engine, SQLModel, Field
 import httpx
 from dotenv import load_dotenv 
 
-load_dotenv()
+load_dotenv(".env.local")
 
 OLLAMA_MODEL = os.getenv("OLLAMA_API_URL")
 

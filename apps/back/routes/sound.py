@@ -20,9 +20,9 @@ router = APIRouter(
     tags=["sound"]
 )
 
-load_dotenv()
+load_dotenv(".env.local")
 
-ollamaURL = os.getenv("OLLAMA_API_URL")
+ollamaURL = os.getenv("ollamaURL")
 OLLAMA_MODEL = "gemma3:12b"
 F5_API_URL = "http://localhost:8001/internal/generate" 
 

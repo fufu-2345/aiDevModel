@@ -17,7 +17,7 @@ from database import get_session
 from models import chapterContent, character, entity, chunkContent 
 from services import save_extraction_result
 
-load_dotenv()
+load_dotenv(".env.local")
 
 router = APIRouter(
     prefix="/extractEntities",

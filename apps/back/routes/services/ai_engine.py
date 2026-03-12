@@ -131,7 +131,6 @@ class BGGenerator:
             self.pipe.enable_vae_slicing()
         else:
             self.pipe.to(self.device)
-        print(self.pipe)
         return self.pipe
 
     def generate_bg(self, prompt, output_path):

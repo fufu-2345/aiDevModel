@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 translator = Translator()
-load_dotenv()
+load_dotenv(".env.local")
 
 app.add_middleware(
     CORSMiddleware,
