@@ -26,4 +26,4 @@ jobs:
           context: ./apps/back
           file: ./apps/back/Dockerfile
           push: true
-          tags: fufu2345/aiDev-back:latest
+          tags: fufu2345/aidev-back:latest

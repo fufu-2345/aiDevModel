@@ -26,4 +26,4 @@ jobs:
           context: ./apps/sound
           file: ./apps/sound/Dockerfile
           push: true
-          tags: fufu2345/aiDev-sound:latest
+          tags: fufu2345/aidev-sound:latest
