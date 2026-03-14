@@ -8,7 +8,7 @@ on:
 
 jobs:
   deploy:
-    name: Deploy front
+    name: Deploy sound
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

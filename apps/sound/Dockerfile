@@ -1,8 +1,13 @@
-FROM python:3.11.14-alpine
+FROM python:3.13-slim
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN python -m venv .venvF5
+
 ENV PATH="/app/.venvF5/bin:$PATH"
 
 COPY requirementsF5.txt . 

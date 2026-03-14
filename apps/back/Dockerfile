@@ -1,6 +1,10 @@
-FROM python:3.13.5-alpine
+FROM python:3.13-slim
 
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN python -m venv .venv
 
