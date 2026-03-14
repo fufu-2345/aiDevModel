@@ -119,7 +119,7 @@ export default function AuthPage() {
           showCancelButton: true,
           confirmButtonText: "Confirm",
           cancelButtonText: "Cancel",
-          confirmButtonColor: "#f472b6",
+          confirmButtonColor: "#2563EB",
           inputValidator: (value) => {
             if (!value) return "Please enter the OTP to confirm!";
           },
