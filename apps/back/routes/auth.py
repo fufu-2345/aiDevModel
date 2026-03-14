@@ -11,6 +11,10 @@ import smtplib
 from email.message import EmailMessage
 from database import engine 
 from models import users    
+from dotenv import load_dotenv 
+import os
+
+load_dotenv(".env.local")
 
 SECRET_KEY = "your-super-secret-key-change-this-in-production"
 ALGORITHM = "HS256"
@@ -18,8 +22,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
-SENDER_EMAIL = "s6604062610225@email.kmutnb.ac.th" 
-SENDER_PASSWORD = "sluq gnio uvnz zelr" 
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 
 class otp_codes(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

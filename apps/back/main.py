@@ -56,7 +56,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ollamaURL = "http://localhost:11434/api/generate"
+ollamaURL = os.getenv("ollamaURL")
 extractModel = "gemma3:12b"
 stabilityModel = os.getenv("STABILITY_MODEL_PATH")
 app.mount("/static/public", StaticFiles(directory="public"), name="static")

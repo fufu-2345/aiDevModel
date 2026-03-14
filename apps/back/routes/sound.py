@@ -24,7 +24,7 @@ load_dotenv(".env.local")
 
 ollamaURL = os.getenv("ollamaURL")
 OLLAMA_MODEL = "gemma3:12b"
-F5_API_URL = "http://localhost:8001/internal/generate" 
+F5_API_URL = os.getenv("F5_API_URL")
 
 F5_REF_PATHS = {
     "narrator": "F5sound/male.wav",

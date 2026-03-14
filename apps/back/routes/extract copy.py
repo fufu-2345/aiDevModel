@@ -38,6 +38,7 @@ genItem = False
 genLocation = False
 
 MIN_SUBSTRING_LENGTH = 6
+# ==========================================
 
 GENERIC_NAMES = {
     "man", "woman", "boy", "girl", "child", "kid", "baby", "children",
@@ -61,6 +62,7 @@ BANNED_TAGS = {
 }
 
 def parse_tags_to_set(tags_input):
+    """แปลง Tags string/list ให้เป็น Set เพื่อตัดคำซ้ำ"""
     if not tags_input:
         return set()
     if isinstance(tags_input, str):
@@ -70,6 +72,7 @@ def parse_tags_to_set(tags_input):
     return set()
 
 def load_image_pipe():
+    """โหลด Stable Diffusion Pipeline (Load on Demand)"""
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch_dtype = torch.float16 if device == "cuda" else torch.float32
     
@@ -109,6 +112,7 @@ def load_image_pipe():
     return pipe
 
 def generate_images_for_missing_refpaths(session: Session, movie_id: int):
+    """สร้างภาพให้ตัวละคร/วัตถุที่ยังไม่มีภาพ (refpath ว่าง)"""
     print(f"🎨 Starting Image Generation for Movie ID: {movie_id}")
     char_statement = select(character).where(
         character.movieId == movie_id,
@@ -262,6 +266,7 @@ def generate_images_for_missing_refpaths(session: Session, movie_id: int):
         print("✅ RAM Freed.")
 
 async def translate_text(text: str) -> str:
+    """Helper แปลภาษาไทยเป็นอังกฤษ พร้อม Retry"""
     translator = Translator()
     retries = 3
     for i in range(retries):
@@ -275,6 +280,9 @@ async def translate_text(text: str) -> str:
     return text 
 
 async def create_and_save_chunks(session: Session, chapter: chapterContent):
+    """
+    แบ่ง Chunk แบบ Dynamic Quote Tracking -> แปลภาษา -> Save ลง DB -> Return English Chunks
+    """
     print(f"Creating chunks for Chapter {chapter.id}")
     
     existing_chunks = session.exec(select(chunkContent).where(chunkContent.chapterId == chapter.id)).all()
@@ -289,19 +297,20 @@ async def create_and_save_chunks(session: Session, chapter: chapterContent):
     inside_quote = False
     
     for line in lines:
-        current_chunk.append(line)
-        quote_count = line.count('"') + line.count('“') + line.count('”')
-        if quote_count % 2 != 0:
-            inside_quote = not inside_quote
-            
-        if (not inside_quote and len(current_chunk) >= CHUNK_SIZE) or len(current_chunk) >= 5:
+        has_quote = '"' in line
+        quote_count = line.count('"')
+
+        if not inside_quote and has_quote and len(current_chunk) > 0:
             base_chunks.append(current_chunk)
             current_chunk = []
-            inside_quote = False 
-
+        current_chunk.append(line)
+        if quote_count % 2 != 0:
+            inside_quote = not inside_quote
+        if not inside_quote and len(current_chunk) >= CHUNK_SIZE:
+            base_chunks.append(current_chunk)
+            current_chunk = []
     if current_chunk:
         base_chunks.append(current_chunk)
-
     raw_chunks_data = [] 
     for i, chunk_lines in enumerate(base_chunks):
         thai_no_overlap = "\n".join(chunk_lines)
@@ -310,18 +319,16 @@ async def create_and_save_chunks(session: Session, chapter: chapterContent):
             overlap_lines.extend(base_chunks[i+1][:CHUNK_OVERLAP])
         thai_overlap = "\n".join(overlap_lines)
         raw_chunks_data.append((thai_no_overlap, thai_overlap))
-        
     print(f"Processing Chapter {chapter.id}: Found {len(raw_chunks_data)} chunks.")
     final_eng_chunks = []
-    
     for idx, (thai_no_overlap, thai_overlap) in enumerate(raw_chunks_data):
         print(f"Processing chunk {idx+1}/{len(raw_chunks_data)}")
         eng_text = await translate_text(thai_overlap)
         final_eng_chunks.append(eng_text)
         new_chunk = chunkContent(
             chunkNumber = idx + 1,
-            chunkDetail = thai_no_overlap,
-            chunkDetailEng = eng_text,
+            chunkDetail = thai_no_overlap,  # เซฟแบบ No Overlap ลง DB
+            chunkDetailEng = eng_text,      # เซฟแบบ Overlap ให้เป็น English
             picRef = None,           
             chapterId = chapter.id
         )
@@ -331,6 +338,7 @@ async def create_and_save_chunks(session: Session, chapter: chapterContent):
     return final_eng_chunks
 
 async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel: str):
+    """ส่ง Text Chunk ไปให้ LLM Extract ข้อมูล"""
     prompt = f"""
     Role:
     You are an AI Visual Director.
@@ -406,6 +414,8 @@ async def processChunk(chunk_text: str, client: httpx.AsyncClient, extractModel:
         print(f"Process Error: {e}")
         return None
 
+# --- Main Endpoint ---
+
 @router.get("/{chapter_id}")
 async def extract_entities(chapter_id: int, session: Session = Depends(get_session)):
     start = time.perf_counter()
@@ -444,6 +454,7 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
             e_type = raw.get("type", "").strip().capitalize()
             name = raw.get("name", "").strip()
             
+            # Skip if Location
             if "location" in e_type.lower():
                 continue
             
@@ -457,8 +468,10 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
             elif isinstance(raw_alts, str):
                 current_alts = {raw_alts.strip()}
             
+            # Filter generic alts
             current_alts = {a for a in current_alts if a.lower() not in GENERIC_NAMES}
 
+            # Filter generic main name
             if name.lower() in GENERIC_NAMES:
                 if len(current_alts) > 0:
                     best_name = max(current_alts, key=len) 
@@ -513,6 +526,7 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
 
                     existing["altNames"].update(current_alts)
                     
+                    # Merge Tags
                     existing["IdentityTags"].update(i_tags)
                     existing["ModifierTags"].update(m_tags)
                     existing["VisualTags"].update(v_tags)
@@ -549,6 +563,7 @@ async def extract_entities(chapter_id: int, session: Session = Depends(get_sessi
 
             e_type_lower = data["type"].lower()
             if "character" in e_type_lower:
+                # LIMIT TAGS
                 i_list = sorted(list(data["IdentityTags"]))
                 m_list = sorted(list(data["ModifierTags"]))
                 
