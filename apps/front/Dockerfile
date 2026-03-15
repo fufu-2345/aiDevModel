@@ -5,17 +5,20 @@ WORKDIR /app
 
 RUN npm install -g pnpm
 
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json ./
+
+RUN npm pkg delete scripts.postinstall
 
 COPY packages ./packages
-
 COPY apps/front ./apps/front
 
 RUN pnpm install 
 
 RUN pnpm build
 
+WORKDIR /app/apps/front
+
 EXPOSE 3000
 ENV NODE_ENV=production
 
-CMD ["pnpm", "start",]
+CMD ["pnpm", "start"]
