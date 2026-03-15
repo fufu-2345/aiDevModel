@@ -23,7 +23,7 @@ jobs:
       - name: Build and push Docker Image
         uses: docker/build-push-action@v5
         with:
-          context: ./apps/front
+          context: .
           file: ./apps/front/Dockerfile
           push: true
           tags: fufu2345/aidev-front:latest
