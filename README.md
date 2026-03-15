@@ -53,7 +53,10 @@ npx create-turbo@latest -e with-tailwind
 
 # Swagger
 
-http://127.0.0.1:8000/docs
-
-netstat -ano | findstr :8000  
-taskkill /IM python.exe /F
+http://127.0.0.1:8000/docs  
+  
+netstat -ano | findstr :8000    
+taskkill /IM python.exe /F  
+  
+package.json 
+scripts afterinstall คือ postinstall แก้ชื่อได้ถ้าจะใช้
