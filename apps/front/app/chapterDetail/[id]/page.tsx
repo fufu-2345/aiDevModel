@@ -184,7 +184,7 @@ export default function ChapterReaderPage({
   const fetchChapter = async () => {
     try {
       const res = await fetch(
-        `http://127.0.0.1:8000/movies/chapters/${chapterId}`,
+        `${process.env.NEXT_PUBLIC_BACK_URL}/movies/chapters/${chapterId}`,
       );
       if (res.ok) {
         const data = await res.json();
@@ -195,7 +195,7 @@ export default function ChapterReaderPage({
         try {
           setLoading(true);
           const response = await fetch(
-            `http://127.0.0.1:8000/movies/chunk/${chapterId}`,
+            `${process.env.NEXT_PUBLIC_BACK_URL}/movies/chunk/${chapterId}`,
           );
           if (!response.ok) throw new Error("Network response was not ok");
           const data = await response.json();
@@ -234,23 +234,24 @@ export default function ChapterReaderPage({
   const extractGen = async () => {
     try {
       const response1 = await fetch(
-        `http://127.0.0.1:8000/extractEntities/${chapterId}`,
+        `${process.env.NEXT_PUBLIC_BACK_URL}/extractEntities/${chapterId}`,
       );
 
       await delay(3000);
       const response2 = await fetch(
-        `http://127.0.0.1:8000/sound/${chapterId}/analysis`,
+        `${process.env.NEXT_PUBLIC_BACK_URL}/sound/${chapterId}/analysis`,
       );
 
       await delay(3000);
       const response3 = await fetch(
-        `http://127.0.0.1:8000/createPic/generate-images/${chapterId}`,
+        `${process.env.NEXT_PUBLIC_BACK_URL}/createPic/generate-images/${chapterId}`,
       );
 
       await delay(3000);
       const response4 = await fetch(
-        `http://127.0.0.1:8000/matcher/${chapterId}`,
+        `${process.env.NEXT_PUBLIC_BACK_URL}/matcher/${chapterId}`,
       );
+      await delay(1000);
       fetchChapter();
     } catch (error) {
       console.error("err API:", error);
@@ -279,7 +280,7 @@ export default function ChapterReaderPage({
     const loadingToast = toast.loading("Saving...");
     try {
       const res = await fetch(
-        `http://127.0.0.1:8000/movies/chapters/${chapterId}`,
+        `${process.env.NEXT_PUBLIC_BACK_URL}/movies/chapters/${chapterId}`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -410,11 +411,11 @@ export default function ChapterReaderPage({
                   className="rounded-lg shadow-lg"
                 >
                   <source
-                    src={`http://127.0.0.1:8000/static/${chapter.vdoPath}`}
+                    src={`${process.env.NEXT_PUBLIC_BACK_URL}/static/${chapter.vdoPath}`}
                     type="video/mp4"
                   />
                   เบราว์เซอร์ของคุณไม่รองรับการเล่นวิดีโอ
-                </video>
+                </video >
                 <br />
                 <hr className="my-8 border-gray-300" />
                 <div>
@@ -424,7 +425,7 @@ export default function ChapterReaderPage({
                         {chunk.picRef && (
                           <div className="w-full flex justify-center">
                             <img
-                              src={`http://127.0.0.1:8000/static/${chunk.picRef}`}
+                              src={`${process.env.NEXT_PUBLIC_BACK_URL}/static/${chunk.picRef}`}
                               className="max-w-full h-auto object-contain rounded-md"
                             />
                           </div>
@@ -439,11 +440,12 @@ export default function ChapterReaderPage({
                     ))}
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
+              </div >
+            )
+            }
+          </div >
+        </div >
+      </div >
+    </div >
   );
 }

@@ -27,7 +27,7 @@ export default function AuthPage() {
 
     if (isLogin) {
       try {
-        const response = await fetch("http://127.0.0.1:8000/auth/login", {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_BACK_URL}/auth/login`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -91,7 +91,7 @@ export default function AuthPage() {
 
       try {
         const otpResponse = await fetch(
-          "http://127.0.0.1:8000/auth/request-otp",
+          `${process.env.NEXT_PUBLIC_BACK_URL}/auth/request-otp`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -136,7 +136,7 @@ export default function AuthPage() {
         }
 
         const registerResponse = await fetch(
-          "http://127.0.0.1:8000/auth/register",
+          `${process.env.NEXT_PUBLIC_BACK_URL}/auth/register`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },

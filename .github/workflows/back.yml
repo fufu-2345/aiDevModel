@@ -27,3 +27,27 @@ jobs:
           file: ./apps/back/Dockerfile
           push: true
           tags: fufu2345/aidev-back:latest
+
+      - name: Deploy to Server and Create .env
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: root
+          password: ${{ secrets.SERVER_PASSWORD }}
+          script: |
+            cd /root/myproject 
+            
+            echo "POSTGRES_USER=${{ secrets.POSTGRES_USER }}" > .env
+            echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> .env
+            echo "POSTGRES_SERVER=db" >> .env
+            echo "POSTGRES_PORT=5432" >> .env
+            echo "POSTGRES_DB=${{ secrets.POSTGRES_DB }}" >> .env
+            echo "DATABASE_URL=postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@db:5432/${{ secrets.POSTGRES_DB }}" >> .env
+            echo "ollamaURL=${{ secrets.OLLAMA_URL }}" >> .env
+            echo "stabilityModel=${{ secrets.STABILITY_MODEL }}" >> .env
+            echo "SENDER_EMAIL=${{ secrets.SENDER_EMAIL }}" >> .env
+            echo "SENDER_PASSWORD=${{ secrets.SENDER_PASSWORD }}" >> .env
+            echo "F5_API_URL=http://sound:8001/internal/generate" >> .env
+            
+            docker compose pull
+            docker compose up -d

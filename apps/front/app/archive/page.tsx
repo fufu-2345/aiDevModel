@@ -136,7 +136,7 @@ export default function MovieDashboard() {
 
   const fetchMovies = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/movies/");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACK_URL}/movies/`);
       if (res.ok) {
         const data = await res.json();
         setMovies(data);
@@ -155,7 +155,7 @@ export default function MovieDashboard() {
     } else {
       try {
         const res = await fetch(
-          `http://127.0.0.1:8000/movies/chapters/searchArchive/${searchBar}/`,
+          `${process.env.NEXT_PUBLIC_BACK_URL}/movies/chapters/searchArchive/${searchBar}/`,
         );
         if (res.ok) {
           const data = await res.json();
@@ -171,7 +171,7 @@ export default function MovieDashboard() {
 
   const fetchMoviePics = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/movies/pic/allMovies");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACK_URL}/movies/pic/allMovies`);
       if (res.ok) {
         const data = await res.json();
         setMoviePics(data);
@@ -221,7 +221,7 @@ export default function MovieDashboard() {
     });
     if (!result.isConfirmed) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/movies/${id}`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACK_URL}/movies/${id}`, {
         method: "DELETE",
       });
       if (res.ok) {
@@ -244,7 +244,7 @@ export default function MovieDashboard() {
     formData.append("title", titleInput);
     formData.append("file", selectedFile);
     try {
-      const res = await fetch("http://127.0.0.1:8000/uploadPDF/", {
+      const res = await fetch(`${process.env.bacNEXT_PUBLIC_BACK_URLkUrl}/uploadPDF/`, {
         method: "POST",
         body: formData,
       });
@@ -355,7 +355,7 @@ export default function MovieDashboard() {
                 <div className="h-48 bg-gray-200 flex items-center justify-center relative overflow-hidden">
                   {moviePics[movie.id] ? (
                     <img
-                      src={`http://127.0.0.1:8000/static/${moviePics[movie.id]}`}
+                      src={`${process.env.NEXT_PUBLIC_BACK_URL}/static/${moviePics[movie.id]}`}
                       alt={movie.movieTitle}
                       className="w-full h-full object-cover"
                     />

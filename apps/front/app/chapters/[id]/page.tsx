@@ -104,20 +104,20 @@ export default function ChapterListPage({
   const fetchData = async () => {
     try {
       // Fetch Movie Data
-      const movieRes = await fetch(`http://127.0.0.1:8000/movies/${movieId}`);
+      const movieRes = await fetch(`${process.env.NEXT_PUBLIC_BACK_URL}/movies/${movieId}`);
       if (movieRes.ok) {
         setMovie(await movieRes.json());
       }
       // Fetch Chapters Data
       const chapterRes = await fetch(
-        `http://127.0.0.1:8000/movies/${movieId}/chapters`,
+        `${process.env.NEXT_PUBLIC_BACK_URL}/movies/${movieId}/chapters`,
       );
       if (chapterRes.ok) {
         const data = await chapterRes.json();
         setChapters(data);
       }
 
-      const picRes = await fetch(`http://127.0.0.1:8000/movies/pic/${movieId}`);
+      const picRes = await fetch(`${process.env.NEXT_PUBLIC_BACK_URL}/movies/pic/${movieId}`);
       if (picRes.ok) {
         const picData = await picRes.json();
         setPictures(picData);
@@ -154,7 +154,7 @@ export default function ChapterListPage({
     } else {
       try {
         const res = await fetch(
-          `http://127.0.0.1:8000/movies/chapters/searchChapters/${searchBar}/${movieId}/`,
+          `${process.env.NEXT_PUBLIC_BACK_URL}/movies/chapters/searchChapters/${searchBar}/${movieId}/`,
         );
         if (res.ok) {
           const data = await res.json();
@@ -229,7 +229,7 @@ export default function ChapterListPage({
             <div className="w-80 h-60 bg-gray-200 rounded-xl overflow-hidden shadow-md flex-shrink-0">
               {pictures && pictures.moviePic ? (
                 <img
-                  src={`http://127.0.0.1:8000/static/${pictures.moviePic}`}
+                  src={`${process.env.NEXT_PUBLIC_BACK_URL}/static/${pictures.moviePic}`}
                   alt={movie.movieTitle}
                   className="w-full h-full object-cover"
                 />
@@ -295,7 +295,7 @@ export default function ChapterListPage({
                   <div className="aspect-video bg-gray-100 relative overflow-hidden">
                     {pictures && pictures.chapters[chapter.id] ? (
                       <img
-                        src={`http://127.0.0.1:8000/static/${pictures.chapters[chapter.id]}`}
+                        src={`${process.env.NEXT_PUBLIC_BACK_URL}/static/${pictures.chapters[chapter.id]}`}
                         alt={chapter.chapterTitle}
                         className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                       />

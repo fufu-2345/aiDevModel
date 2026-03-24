@@ -168,7 +168,6 @@ def get_chunks_analysis(
     chapter_id: int, 
     session: Session = Depends(get_session)
 ):
-    # [UPDATE] ตรวจหาไฟล์ .wav เท่านั้น ไม่ใช้ mp3 แล้ว
     output_file_path = os.path.abspath(f"public/storage/sound/{chapter_id}.wav")
     if os.path.exists(output_file_path):
         return {
@@ -228,7 +227,6 @@ def get_chunks_analysis(
             
             audio_seg = _generate_via_f5_api(clean_text, speaker_type)
             
-            # [FIX] เช็คให้ชัวร์ว่า F5 ส่งเสียงกลับมาจริงๆ
             if audio_seg is not None:
                 segment_duration = len(audio_seg) + len(gap_segment)
                 chunk_audio_duration_ms += segment_duration
@@ -236,7 +234,7 @@ def get_chunks_analysis(
                 combined_audio += audio_seg
                 combined_audio += gap_segment
             else:
-                print(f"      ⚠️ F5 สร้างเสียงประโยคนี้ไม่สำเร็จ ข้ามไป...", flush=True)
+                print(f"skipped chunk {chunk_num}", flush=True)
         
         analysis_result[str(chunk_num)] = {
             "segments": segments,
@@ -246,18 +244,15 @@ def get_chunks_analysis(
     print(f"\n[Cleanup] Cleaning up unused variables...", flush=True)
     gc.collect()
     
-    # [FIX] ดักจับการพัง 100% ถ้าไม่มีเสียงถูกเอามาต่อกันเลย ให้ยกเลิกการทำงานทั้งหมดทันที!
     if len(combined_audio) == 0:
-        print("\n❌ ❌ [ERROR] F5 API ล้มเหลวทั้งหมด ไม่สามารถสร้างไฟล์เสียงได้ ยกเลิกการเซฟลง DB!", flush=True)
-        raise HTTPException(status_code=500, detail="ไม่สามารถสร้างเสียงจาก F5 ได้เลย (โปรดเช็ค F5 API)")
-
-    # [UPDATE] เซฟไฟล์เป็น .wav เพียงไฟล์เดียว
+        print("\n F5 API err", flush=True)
+        raise HTTPException(status_code=500, detail="F5 API err")
+    
     output_dir = os.path.abspath("public/storage/sound")
     os.makedirs(output_dir, exist_ok=True)
     output_filename = f"{chapter_id}.wav"
     output_file_path = os.path.join(output_dir, output_filename)
     
-    print(f"[+] Saving audio to: {output_file_path}", flush=True)
     try:
         combined_audio.export(output_file_path, format="wav")
         analysis_result["audio_status"] = "success"
@@ -273,19 +268,16 @@ def get_chunks_analysis(
             for old_m in old_matchers:
                 session.delete(old_m)
             session.commit()
-            print(f"[Database] 🗑️ ลบ Matcher เก่า {len(old_matchers)} รายการ", flush=True)
     except Exception as e:
         session.rollback()
-        print(f"[Database Error] Failed to delete old matchers: {e}", flush=True)
+        print(f"Failed to delete old matchers: {e}", flush=True)
 
     try:
         for chunk_num_str, data in analysis_result.items():
             if chunk_num_str in ["audio_status", "audio_file_path"]: continue
             
-            # [FIX] ถ้า Chunk นี้เจนเสียงไม่ผ่าน (เวลาเป็น 0) จะไม่เซฟลง Database 
             if isinstance(data, dict) and "duration" in data and data["duration"] > 0:
                 chunk_id = chunk_id_map.get(chunk_num_str)
-                print(f"Chunk {chunk_num_str}: {data['duration']}s | mapped chunkContentId: {chunk_id}", flush=True)
                 new_matcher = matcher(
                     character="",
                     location="",
@@ -295,7 +287,6 @@ def get_chunks_analysis(
                 )
                 session.add(new_matcher)
         session.commit()
-        print(f"[Database] Matcher records inserted successfully.", flush=True)
     except Exception as e:
         session.rollback()
         print(f"[Database Error] Failed to insert matcher: {e}", flush=True)

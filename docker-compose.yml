@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  frontend:
+    image: fufu2345/aidev-front:latest
+    restart: always
+    ports:
+      - "13000:3000"
+
+  backend:
+    image: fufu2345/aidev-back:latest
+    restart: always
+    ports:
+      - "18000:8000"
+    depends_on:
+      - db
+    env_file:
+      - .env
+
+  sound:
+    image: fufu2345/aidev-sound:latest
+    restart: always
+    ports:
+      - "18001:8001"
+    env_file:
+      - .env
+
+  db:
+    image: postgres:15-alpine
+    restart: always
+    ports:
+      - "15432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    env_file:
+      - .env
+
+volumes:
+  pgdata:
