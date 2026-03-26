@@ -61,7 +61,7 @@ extractModel = "gemma3:12b"
 stabilityModel = os.getenv("STABILITY_MODEL_PATH")
 app.mount("/static/public", StaticFiles(directory="public"), name="static")
 
-from routes import movies, uploadPDF, createPIC, extract, sound, matcher, auth#, F5TTS
+from routes import movies, uploadPDF, createPIC, extract, sound, matcher, auth, yt
 app.include_router(movies.router)
 app.include_router(uploadPDF.router)
 app.include_router(createPIC.router)
@@ -69,7 +69,7 @@ app.include_router(extract.router)
 app.include_router(sound.router)
 app.include_router(matcher.router)
 app.include_router(auth.router)
-# app.include_router(F5TTS.router)
+app.include_router(yt.router)
 
 async def generate_image_from_text(prompt: str) -> str:
     try:

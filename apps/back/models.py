@@ -88,3 +88,11 @@ class matcher(SQLModel, table=True):
     duration: float
     chunkContentId: Optional[int] = Field(default=None, foreign_key="chunkcontent.id")
     chapterId: Optional[int] = Field(default=None, foreign_key="chaptercontent.id")
+    
+class ytVideo(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    movieTitleId: Optional[int] = Field(default=None, foreign_key="movietitle.id")
+    chaptercontentId: Optional[int] = Field(default=None, foreign_key="chaptercontent.id")
+    videoUrl: str = Field(default="")
+    viewCount: int = Field(default=0)
+    likeCount: int = Field(default=0)
