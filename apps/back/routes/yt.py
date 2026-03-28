@@ -1,19 +1,43 @@
+import os
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+
+from models import chapterContent, movieTitle, ytVideo
+from database import get_session
 
 router = APIRouter(
     prefix="/yt",
     tags=["yt"]
 )
 
-def get_session():
-    pass
+SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
 
 def get_youtube_client():
-    pass
+    creds = None
+    
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+        
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            if not os.path.exists('credentials.json'):
+                raise Exception("ไม่พบไฟล์ credentials.json กรุณาตรวจสอบตำแหน่งไฟล์")
+                
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+            
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+
+    return build('youtube', 'v3', credentials=creds)
 
 @router.get("/upload/{chapter_id}")
 async def upload_chapter_to_youtube(
@@ -65,11 +89,14 @@ async def upload_chapter_to_youtube(
 
         if thumbnail_path:
             print("กำลังอัปโหลด Thumbnail...")
-            youtube.thumbnails().set(
-                videoId=video_id,
-                media_body=MediaFileUpload(thumbnail_path)
-            ).execute()
-            print("อัปโหลด Thumbnail สำเร็จ!")
+            try:
+                youtube.thumbnails().set(
+                    videoId=video_id,
+                    media_body=MediaFileUpload(thumbnail_path)
+                ).execute()
+                print("อัปโหลด Thumbnail สำเร็จ!")
+            except Exception as thumb_e:
+                print(f"คำเตือน: อัปโหลด Thumbnail ไม่สำเร็จ ({str(thumb_e)}) แต่วิดีโอหลักอัปโหลดไปแล้ว")
 
         new_yt_video = ytVideo(
             movieTitleId=movie.id,

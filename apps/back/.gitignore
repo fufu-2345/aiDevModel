@@ -12,3 +12,4 @@ output_audio/*
 *.wav
 .home_fake/*
 .cache/*
+credentials.json
