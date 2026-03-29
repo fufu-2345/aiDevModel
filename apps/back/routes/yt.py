@@ -16,7 +16,10 @@ router = APIRouter(
     tags=["yt"]
 )
 
-SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
+SCOPES = [
+    'https://www.googleapis.com/auth/youtube.upload',
+    'https://www.googleapis.com/auth/youtube.readonly'
+]
 
 def get_youtube_client():
     creds = None
@@ -42,6 +45,8 @@ def get_youtube_client():
 @router.get("/upload/{chapter_id}")
 async def upload_chapter_to_youtube(
     chapter_id: int, 
+    # public or private
+    isPublic: bool = True,
     session: Session = Depends(get_session)
 ):
     chapter = session.get(chapterContent, chapter_id)
@@ -52,12 +57,16 @@ async def upload_chapter_to_youtube(
     if not movie:
         raise HTTPException(status_code=404, detail="ไม่พบข้อมูล Movie ของ Chapter นี้")
 
-    yt_title = f"{movie.movieTitle} | EP {chapter.episodeNumber}: {chapter.chapterTitle}"
+    ep_display = int(chapter.episodeNumber) if chapter.episodeNumber % 1 == 0 else chapter.episodeNumber
+
+    yt_title = f"{movie.movieTitle} | EP {ep_display}: {chapter.chapterTitle}"
     video_path = chapter.vdoPath
     thumbnail_path = chapter.picPath
 
     if not video_path:
         raise HTTPException(status_code=400, detail="ไม่พบ vdoPath สำหรับอัปโหลด")
+
+    privacy_status = "public" if isPublic else "private"
 
     try:
         youtube = get_youtube_client()
@@ -65,17 +74,16 @@ async def upload_chapter_to_youtube(
         body = {
             "snippet": {
                 "title": yt_title,
-                "description": f"รับชม {movie.movieTitle} ตอนที่ {chapter.episodeNumber}",
+                "description": "Thank for watching",
                 "categoryId": "22"
             },
             "status": {
-                "privacyStatus": "private"
+                "privacyStatus": privacy_status
             }
         }
 
         media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
         
-        print(f"กำลังอัปโหลดวิดีโอ: {yt_title} ...")
         upload_request = youtube.videos().insert(
             part="snippet,status",
             body=body,
@@ -85,35 +93,129 @@ async def upload_chapter_to_youtube(
         
         video_id = response['id']
         yt_url = f"https://www.youtube.com/watch?v={video_id}"
-        print(f"อัปโหลดวิดีโอสำเร็จ! URL: {yt_url}")
 
         if thumbnail_path:
-            print("กำลังอัปโหลด Thumbnail...")
             try:
                 youtube.thumbnails().set(
                     videoId=video_id,
                     media_body=MediaFileUpload(thumbnail_path)
                 ).execute()
-                print("อัปโหลด Thumbnail สำเร็จ!")
             except Exception as thumb_e:
-                print(f"คำเตือน: อัปโหลด Thumbnail ไม่สำเร็จ ({str(thumb_e)}) แต่วิดีโอหลักอัปโหลดไปแล้ว")
+                print(f"Thumbnail error: {str(thumb_e)}")
 
-        new_yt_video = ytVideo(
-            movieTitleId=movie.id,
-            chaptercontentId=chapter.id,
-            videoUrl=yt_url,
-            viewCount=0,
-            likeCount=0
-        )
-        session.add(new_yt_video)
-        session.commit()
-        session.refresh(new_yt_video)
+        statement = select(ytVideo).where(ytVideo.chaptercontentId == chapter.id)
+        existing_yt_videos = session.exec(statement).all()
+
+        if existing_yt_videos:
+            saved_video = existing_yt_videos[0]
+            saved_video.videoUrl = yt_url
+            saved_video.viewCount = 0
+            saved_video.likeCount = 0
+            session.add(saved_video)
+            
+            if len(existing_yt_videos) > 1:
+                for duplicate in existing_yt_videos[1:]:
+                    session.delete(duplicate)
+                    
+            session.commit()
+            session.refresh(saved_video)
+        else:
+            new_yt_video = ytVideo(
+                movieTitleId=movie.id,
+                chaptercontentId=chapter.id,
+                videoUrl=yt_url,
+                viewCount=0,
+                likeCount=0
+            )
+            session.add(new_yt_video)
+            session.commit()
+            session.refresh(new_yt_video)
+            saved_video = new_yt_video
 
         return {
             "message": "อัปโหลดวิดีโอลง YouTube และบันทึกข้อมูลสำเร็จ",
             "video_url": yt_url,
-            "data": new_yt_video
+            "data": saved_video
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาดในการอัปโหลด: {str(e)}")
+
+@router.get("/stats/{chapter_id}")
+def get_and_update_yt_stats(
+    chapter_id: int, 
+    refresh: bool = False,
+    session: Session = Depends(get_session)
+):
+    statement = select(chapterContent).where(chapterContent.id == chapter_id)
+    chapter = session.exec(statement).first()
+    
+    if not chapter:
+        raise HTTPException(status_code=404, detail="ไม่พบข้อมูลวิดีโอ (Chapter not found)")
+        
+    yt_statement = select(ytVideo).where(ytVideo.chaptercontentId == chapter_id)
+    yt_stat = session.exec(yt_statement).first()
+
+    raw_url = ""
+    if yt_stat and yt_stat.videoUrl:
+        raw_url = yt_stat.videoUrl
+    elif chapter.vdoPath:
+        raw_url = chapter.vdoPath
+
+    if refresh and yt_stat and raw_url:
+        video_id = ""
+        if "watch?v=" in raw_url:
+            video_id = raw_url.split("watch?v=")[1].split("&")[0]
+        elif "youtu.be/" in raw_url:
+            video_id = raw_url.split("youtu.be/")[1].split("?")[0]
+            
+        if video_id:
+            try:
+                youtube = get_youtube_client()
+                response = youtube.videos().list(
+                    part="statistics",
+                    id=video_id
+                ).execute()
+                
+                if response["items"]:
+                    stats = response["items"][0]["statistics"]
+                    yt_stat.viewCount = int(stats.get("viewCount", 0))
+                    yt_stat.likeCount = int(stats.get("likeCount", 0))
+                    session.add(yt_stat)
+                    session.commit()
+                    session.refresh(yt_stat)
+            except Exception as e:
+                print(f"Error fetching YouTube stats: {e}")
+    
+    view_count = yt_stat.viewCount if yt_stat else 0
+    like_count = yt_stat.likeCount if yt_stat else 0
+        
+    embed_url = raw_url
+    if raw_url:
+        if "watch?v=" in raw_url:
+            video_id = raw_url.split("watch?v=")[1].split("&")[0]
+            embed_url = f"https://www.youtube.com/embed/{video_id}"
+        elif "youtu.be/" in raw_url:
+            video_id = raw_url.split("youtu.be/")[1].split("?")[0]
+            embed_url = f"https://www.youtube.com/embed/{video_id}"
+            
+    return {
+        "chapterTitle": chapter.chapterTitle,
+        "episodeNumber": chapter.episodeNumber,
+        "embed_url": embed_url,
+        "view_count": view_count,
+        "like_count": like_count
+    }
+    
+@router.get("/{chapter_id}")
+def get_yt_video_by_chapter_id(
+    chapter_id: int, 
+    session: Session = Depends(get_session)
+):
+    statement = select(ytVideo).where(ytVideo.chaptercontentId == chapter_id)
+    yt_data = session.exec(statement).first()
+
+    if not yt_data:
+        raise HTTPException(status_code=404, detail="ไม่พบข้อมูล ytVideo สำหรับ Chapter นี้")
+
+    return yt_data

@@ -13,3 +13,4 @@ output_audio/*
 .home_fake/*
 .cache/*
 credentials.json
+token.json

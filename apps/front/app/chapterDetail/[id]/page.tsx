@@ -20,6 +20,7 @@ const ArrowLeftIcon = ({ className }: { className?: string }) => (
     <path d="M12 19l-7-7 7-7" />
   </svg>
 );
+
 const EditIcon = ({ className }: { className?: string }) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -167,7 +168,7 @@ export default function ChapterReaderPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const [chapter, setChapter] = useState<Chapter | null>(null); // maina data
+  const [chapter, setChapter] = useState<Chapter | null>(null); // main data
   const [loading, setLoading] = useState(true);
   const [chunks, setChunks] = useState<any[]>([]);
   const [isEditing, setIsEditing] = useState(false);
@@ -275,6 +276,56 @@ export default function ChapterReaderPage({
     }
   };
 
+  const uploadToYouTube = async (chapterId: number) => {
+    try {
+      console.log(`Uploading Chapter ID: ${chapterId} to YouTube...`);
+
+      const response = await fetch(`http://127.0.0.1:8000/yt/upload/${chapterId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Upload failed');
+      }
+
+      const data = await response.json();
+
+      console.log('Upload successful!', data);
+
+      Swal.fire({
+        title: 'Success!',
+        text: `Video uploaded successfully! URL: ${data.video_url}`,
+        icon: 'success',
+        confirmButtonText: 'OK'
+      });
+
+      return data;
+
+    } catch (error) {
+      console.error('Upload Error:', error);
+
+      if (error instanceof Error) {
+        Swal.fire({
+          title: 'Error!',
+          text: error.message,
+          icon: 'error',
+          confirmButtonText: 'OK'
+        });
+      } else {
+        Swal.fire({
+          title: 'Error!',
+          text: 'An unknown error occurred.',
+          icon: 'error',
+          confirmButtonText: 'OK'
+        });
+      }
+    }
+  };
+
   const handleSave = async () => {
     if (!chapterId) return;
     const loadingToast = toast.loading("Saving...");
@@ -363,6 +414,14 @@ export default function ChapterReaderPage({
                   >
                     Gen Pic
                   </button>
+                  {chapter.vdoPath && (
+                    <button
+                      onClick={() => uploadToYouTube(chapter.id)}
+                      className=" py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
+                    >
+                      Upload VDO
+                    </button>
+                  )}
                   {isEditing ? (
                     <>
                       <button
