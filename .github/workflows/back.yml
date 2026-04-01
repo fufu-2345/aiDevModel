@@ -29,6 +29,7 @@ jobs:
           file: ./apps/back/Dockerfile
           push: true
           tags: fufu2345/aidev-back:latest
+          provenance: false
 
       - name: Copy docker-compose.yml to server
         uses: appleboy/scp-action@master
