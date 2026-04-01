@@ -14,7 +14,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
+      
       - uses: docker/setup-buildx-action@v3
+      
       - uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
@@ -28,6 +30,15 @@ jobs:
           push: true
           tags: fufu2345/aidev-back:latest
 
+      - name: Copy docker-compose.yml to server
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          source: "docker-compose.yml" 
+          target: "/home/tata/docker" 
+
       - name: Deploy to Server and Create .env
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -35,7 +46,7 @@ jobs:
           username: ${{ secrets.SERVER_USERNAME }}
           password: ${{ secrets.SERVER_PASSWORD }}
           script: |
-            cd /home/tata/docker
+            cd /home/tata/docker 
             
             echo "POSTGRES_USER=${{ secrets.POSTGRES_USER }}" > .env
             echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> .env
