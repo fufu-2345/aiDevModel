@@ -35,7 +35,7 @@ jobs:
           username: ${{ secrets.SERVER_USERNAME }}
           password: ${{ secrets.SERVER_PASSWORD }}
           script: |
-            cd /root/myproject 
+            cd /home/tata/docker
             
             echo "POSTGRES_USER=${{ secrets.POSTGRES_USER }}" > .env
             echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> .env
