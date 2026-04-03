@@ -12,6 +12,10 @@ COPY packages ./packages
 COPY apps/front ./apps/front
 
 RUN pnpm install 
+
+ARG NEXT_PUBLIC_BACK_URL
+ENV NEXT_PUBLIC_BACK_URL=$NEXT_PUBLIC_BACK_URL
+
 RUN pnpm build
 
 FROM node:18-alpine AS runner
