@@ -244,7 +244,7 @@ export default function MovieDashboard() {
     formData.append("title", titleInput);
     formData.append("file", selectedFile);
     try {
-      const res = await fetch(`${process.env.bacNEXT_PUBLIC_BACK_URLkUrl}/uploadPDF/`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACK_URL}/uploadPDF/`, {
         method: "POST",
         body: formData,
       });
@@ -255,7 +255,7 @@ export default function MovieDashboard() {
       await fetchMovies();
       toast.success("Upload & Process Successful!", { id: loadingToast });
     } catch (error) {
-      toast.error("Upload failed", { id: loadingToast });
+      toast.error("Upload failed" + error);
     } finally {
       setIsLoading(false);
     }
@@ -393,7 +393,7 @@ export default function MovieDashboard() {
                 >
                   <PlusIcon className="w-6 h-6" />
                 </div>
-                <span className="font-medium text-white">Add New Movie</span>
+                <span className="font-medium text-white">Add New Novel</span>
               </button>
             )}
           </div>
@@ -404,7 +404,7 @@ export default function MovieDashboard() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="bg-gray-50 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
               <h2 className="text-xl font-semibold text-gray-800">
-                Upload New Movie
+                Upload New Novel
               </h2>
               <button
                 onClick={() => setIsModalOpen(false)}
@@ -416,14 +416,14 @@ export default function MovieDashboard() {
             <form onSubmit={handleUpload} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Movie Title
+                  Novel Title
                 </label>
                 <input
                   type="text"
                   required
                   value={titleInput}
                   onChange={(e) => setTitleInput(e.target.value)}
-                  placeholder="Enter movie name..."
+                  placeholder="Enter Novel name..."
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                 />
               </div>

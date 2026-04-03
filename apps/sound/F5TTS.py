@@ -318,4 +318,4 @@ def debug_generate(background_tasks: BackgroundTasks):
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     import uvicorn
-    uvicorn.run("F5:app", host="0.0.0.0", port=8001, reload=False)
+    uvicorn.run("F5TTS:app", host="0.0.0.0", port=8001, reload=False)
