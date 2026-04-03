@@ -10,7 +10,6 @@ jobs:
   deploy:
     name: Deploy to server
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     timeout-minutes: 120
 
     steps:
@@ -47,6 +46,3 @@ jobs:
 
             export COMPOSE_HTTP_TIMEOUT=3600
             export DOCKER_CLIENT_TIMEOUT=3600
-            
-            docker compose pull
-            docker compose up -d
