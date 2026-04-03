@@ -28,4 +28,4 @@ jobs:
           push: true
           tags: fufu2345/aidev-front:latest
           build-args: |
-            NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_BACK_URL=${{ secrets.NEXT_PUBLIC_BACK_URL }}

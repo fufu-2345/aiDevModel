@@ -38,11 +38,13 @@ jobs:
             echo "POSTGRES_PORT=5432" >> .env
             echo "POSTGRES_DB=${{ secrets.POSTGRES_DB }}" >> .env
             echo "DATABASE_URL=postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@db:5432/${{ secrets.POSTGRES_DB }}" >> .env
+            echo "NEXT_PUBLIC_BACK_URL=${{ secrets.NEXT_PUBLIC_BACK_URL }}" >> .env
             echo "ollamaURL=${{ secrets.OLLAMA_URL }}" >> .env
             echo "stabilityModel=${{ secrets.STABILITY_MODEL }}" >> .env
             echo "SENDER_EMAIL=${{ secrets.SENDER_EMAIL }}" >> .env
             echo "SENDER_PASSWORD=${{ secrets.SENDER_PASSWORD }}" >> .env
             echo "F5_API_URL=http://sound:8001/internal/generate" >> .env
+            
 
             export COMPOSE_HTTP_TIMEOUT=3600
             export DOCKER_CLIENT_TIMEOUT=3600
