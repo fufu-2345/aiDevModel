@@ -1,3 +1,4 @@
+import multiprocessing
 import os
 
 if "USERNAME" not in os.environ and "USER" not in os.environ:
@@ -350,3 +351,9 @@ def root():
 @app.post("/")
 def root():
     return "test post 333"
+
+if __name__ == "__main__":
+    multiprocessing.freeze_support()
+    import uvicorn
+    
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
