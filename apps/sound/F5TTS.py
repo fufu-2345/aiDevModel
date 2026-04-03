@@ -189,7 +189,6 @@ def split_thai_to_segments(text: str, max_chars: int = 60) -> list[str]:
     2. ถ้า segment ยาวเกิน max_chars bytes → แบ่งต่อตรงเครื่องหมายวรรคตอน
     3. แต่ละ segment จะถูก gen แยก แล้วค่อย concat
     """
-    # แยกด้วย space ก่อน
     parts = text.split(" ")
     
     segments = []
@@ -198,7 +197,6 @@ def split_thai_to_segments(text: str, max_chars: int = 60) -> list[str]:
     for part in parts:
         part = part.strip()
         if not part:
-            # เจอ space → flush buffer เป็น segment ใหม่ (หยุดพูด)
             if buffer:
                 segments.append(buffer.strip())
                 buffer = ""
@@ -209,7 +207,6 @@ def split_thai_to_segments(text: str, max_chars: int = 60) -> list[str]:
         if len(candidate.encode("utf-8")) <= max_chars:
             buffer = candidate
         else:
-            # buffer เต็มแล้ว → flush แล้วเริ่ม buffer ใหม่
             if buffer:
                 segments.append(buffer.strip())
             buffer = part
@@ -219,17 +216,13 @@ def split_thai_to_segments(text: str, max_chars: int = 60) -> list[str]:
     
     return [s for s in segments if s]
 
-
-# ─────────────────────────────────────────────
-# ฟังก์ชัน generate แยกทีละ segment แล้ว concat
-# ─────────────────────────────────────────────
 def generate_segmented(
     task_id_prefix: str,
     gen_text: str,
     ref_audio: str,
     ref_text: str,
     stype: str,
-    silence_ms: int = 300,       # หยุดพัก (ms) ตรง space แต่ละช่อง
+    silence_ms: int = 300,     
     max_chars: int = 60,
 ) -> str:
     """
@@ -249,7 +242,6 @@ def generate_segmented(
         
         task_queue.put((seg_task_id, seg, ref_audio, ref_text, stype))
         
-        # รอผล
         timeout = 300
         start = time.time()
         while results_dict[seg_task_id]["status"] == "pending":
@@ -262,7 +254,6 @@ def generate_segmented(
         if result["status"] == "error":
             raise RuntimeError(f"Segment {i} error: {result.get('error')}")
         
-        # อ่าน audio
         audio_data, sr = sf.read(result["file"])
         cleanup_temp_file(result["file"])
         
@@ -271,23 +262,24 @@ def generate_segmented(
         
         audio_parts.append(audio_data)
         
-        # เพิ่ม silence หลังแต่ละ segment (จำลองการหยุดตรง space)
         silence_samples = int(sr * silence_ms / 1000)
         silence = np.zeros((silence_samples,) if audio_data.ndim == 1 
                            else (silence_samples, audio_data.shape[1]))
         audio_parts.append(silence)
 
-    # ลบ silence ก้อนสุดท้ายออก (ไม่ต้องหยุดตอนจบ)
     if audio_parts:
         audio_parts = audio_parts[:-1]
 
-    # รวม audio ทั้งหมด
     final_audio = np.concatenate(audio_parts, axis=0)
     
     output_path = f"temp_output_{task_id_prefix}.wav"
     sf.write(output_path, final_audio, sample_rate)
     
     return output_path
+
+@app.get("/")
+def root():
+    return "sound is worked 111"
 
 @app.get("/test")
 def debug_generate(background_tasks: BackgroundTasks):
@@ -314,8 +306,8 @@ def debug_generate(background_tasks: BackgroundTasks):
             ref_audio=ref_audio,
             ref_text=ref_text,
             stype=stype,
-            silence_ms=300,   # ← ปรับตรงนี้ได้ = ระยะหยุดตรง space (ms)
-            max_chars=60,     # ← ปรับตรงนี้ได้ = ขนาด segment สูงสุด (bytes)
+            silence_ms=300, 
+            max_chars=60,   
         )
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))

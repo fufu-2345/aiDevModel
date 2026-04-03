@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN python -m venv /app/.venvF5
 ENV PATH="/app/.venvF5/bin:$PATH"
+ENV BUST_CACHE=1
 
 COPY requirementsF5.txt . 
 
