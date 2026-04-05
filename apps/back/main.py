@@ -51,7 +51,7 @@ load_dotenv(".env.local")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://103.216.158.225:13000", "http://localhost:13000"],  
+    allow_origins=["http://103.216.158.225:13000","*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

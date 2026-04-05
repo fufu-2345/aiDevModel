@@ -414,7 +414,7 @@ export default function ChapterReaderPage({
                     onClick={() => extractGen()}
                     className=" py-3 px-6 rounded-full bg-gradient-to-r from-gray-50/80 to-gray-300/50 hover:from-gray-300 hover:to-gray-400 font-semibold shadow-[0_0_20px_rgba(244,114,182,0.4)] hover:shadow-[0_0_25px_rgba(244,114,182,0.6)] transform hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
                   >
-                    Gen Video
+                    Generate Video
                   </button>
                   {isUpload && (
                     <button
