@@ -1,6 +1,7 @@
 # detail
 
-turbo nextjs + fast api
+turbo nextjs + fast api  
+Video: https://www.youtube.com/watch?v=RwHtyKY8RMQ
 
 # Install(Only for root)
 
